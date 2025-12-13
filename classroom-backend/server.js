@@ -20,7 +20,8 @@ dotenv.config()
 mongoose.connect(process.env.CLASSROOM_DB_URI)
 
 app.get("/health", (req, res) => {
-    res.send("API is running")
+    res.set("Cache-Control", "no-store")
+    res.status(200).json({ status: "ok" })
 })
 
 // Routes
