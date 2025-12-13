@@ -19,6 +19,10 @@ dotenv.config()
 
 mongoose.connect(process.env.CLASSROOM_DB_URI)
 
+app.get("/health", (req, res) => {
+    res.send("API is running")
+})
+
 // Routes
 app.use("/faculty", facultyRouter)
 app.use("/student", studenRouter)
