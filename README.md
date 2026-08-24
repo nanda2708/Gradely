@@ -50,21 +50,30 @@ Follow these steps to run the project locally:
 
 
 ### **1. Clone the Repository**
-```bash
-git clone https://github.com/Kake27/gradely.git
-cd gradely
-```
+```env
+VITE_FIREBASE_API_KEY=your_api_key
+VITE_FIREBASE_AUTH_DOMAIN=your_auth_domain
+VITE_FIREBASE_PROJECT_ID=your_project_id
+VITE_FIREBASE_STORAGE_BUCKET=your_storage_bucket
+VITE_FIREBASE_MESSAGING_SENDER_ID=your_messaging_sender_id
+VITE_FIREBASE_APP_ID=your_app_id
+VITE_FIREBASE_MEASUREMENT_ID=your_measurement_id
 
-### **2. Backend Setup**
-```bash
-cd classroom-backend
-npm install
-```
 
 Create a .env file in the backend directory with the following environmental variables:
-```python
-PORT=your_preferred_port
-CLASSROOM_DB_URI=your_mongodb_database_connection_string
+```env
+Cloudinary credentials belong only in the backend `.env` file:
+
+```env
+CLOUDINARY_CLOUD_NAME=your_cloud_name
+CLOUDINARY_API_KEY=your_api_key
+CLOUDINARY_API_SECRET=your_api_secret
+```
+
+The backend `/upload` endpoint accepts PDF files up to 10 MB and stores
+assignments and submissions in separate Cloudinary folders.
+FRONTEND_URL=http://localhost:5173
+FIREBASE_SERVICE_ACCOUNT_JSON=your_firebase_admin_service_account_json
 ```
 
 Start the backend server:
@@ -75,7 +84,7 @@ npm run dev
 ### **3. Frontend Setup**
 Open a new terminal, navigate to the frontend folder and install required packages
 ```bash
-cd frontend
+cd classroom-frontend
 npm install
 ```
 Create a .env file in the frontend directory with the following environmental variables:
@@ -90,8 +99,11 @@ VITE_FIREBASE_MEASUREMENT_ID: "your_measurement_id"
 
 VITE_CLOUDINARY_CLOUD_NAME="your_cloudinary_cloud_name"
 VITE_CLOUDINARY_API_KEY="your_cloudinary_api_key"
-VITE_CLOUDINARY_API_SECRET="your_cloudinary_api_secret"
+VITE_BACKEND_URL="http://localhost:5000"
 ```
+
+Do not put a Cloudinary API secret in frontend environment variables. Configure
+Cloudinary signing and private credentials on the backend before production use.
 
 Start the frontend server using:
 ```bash
