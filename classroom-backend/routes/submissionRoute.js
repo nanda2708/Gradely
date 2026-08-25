@@ -54,8 +54,11 @@ submissionRouter.post("/submitSolution", requireRole("student"), async (req, res
         });
 
         await solution.save({ session });
-        student.submissions.addToSet(solution._id);
+
+        // Student schema stores submitted work under `solutions`.
+        student.solutions.addToSet(solution._id);
         assignment.submissions.addToSet(solution._id);
+
         await student.save({ session });
         await assignment.save({ session });
 
@@ -101,7 +104,13 @@ submissionRouter.put("/gradeSolution/:solutionId", requireRole("faculty", "ta"),
     const { solutionId } = req.params;
     const { grade, marks, feedback, graderId, graderRole, taId } = req.body;
     const actualGraderId = graderId || taId;
-    const normalizedRole = graderRole === "faculty" || graderRole === "Faculty" ? "Faculty" : "TA";
+    const normalizedRole = graderRole === "faculty" || graderRole === "Faculty"
+        ? "Faculty"
+        : graderRole === "ta" || graderRole === "TA"
+            ? "TA"
+            : req.userRole === "faculty"
+                ? "Faculty"
+                : "TA";
 
     if (!solutionId || !actualGraderId) {
         return res.status(400).json({ error: "Solution ID and grader ID are required" });
