@@ -4,6 +4,7 @@ import cors from "cors";
 import dotenv from "dotenv";
 
 import { requireAuth } from "./middleware/authMiddleware.js";
+import authRouter from "./routes/authRoute.js";
 import facultyRouter from "./routes/facultyRoute.js";
 import studentRouter from "./routes/studentRoute.js";
 import taRouter from "./routes/taRoute.js";
@@ -53,6 +54,7 @@ app.get("/health", (req, res) => {
 
 app.use(requireAuth);
 
+app.use("/auth", authRouter);
 app.use("/faculty", facultyRouter);
 app.use("/student", studentRouter);
 app.use("/ta", taRouter);
