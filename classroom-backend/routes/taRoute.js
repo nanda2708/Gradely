@@ -1,10 +1,11 @@
 import { Router } from "express";
 import TA from "../models/ta.js";
 import Solution from "../models/solutions.js";
+import { requireMatchingEmail, requireRole } from "../middleware/roleMiddleware.js";
 
 const taRouter = Router();
 
-taRouter.post("/createTA", async (req, res) => {
+taRouter.post("/createTA", requireMatchingEmail("body"), async (req, res) => {
     try {
         const ta = await TA.create(req.body);
         return res.status(201).json(ta);
@@ -14,14 +15,10 @@ taRouter.post("/createTA", async (req, res) => {
     }
 });
 
-taRouter.get("/getTAData", async (req, res) => {
+taRouter.get("/getTAData", requireMatchingEmail("query"), async (req, res) => {
     try {
-        const { email } = req.query;
-        if (!email) return res.status(400).json({ error: "Email is required" });
-
-        const ta = await TA.findOne({ email });
+        const ta = await TA.findOne({ email: req.query.email.toLowerCase().trim() });
         if (!ta) return res.status(404).json({ error: "TA not found" });
-
         return res.status(200).json(ta);
     } catch (err) {
         console.error("Error retrieving TA data:", err);
@@ -29,14 +26,10 @@ taRouter.get("/getTAData", async (req, res) => {
     }
 });
 
-taRouter.get("/getTAID", async (req, res) => {
+taRouter.get("/getTAID", requireMatchingEmail("query"), async (req, res) => {
     try {
-        const { email } = req.query;
-        if (!email) return res.status(400).json({ error: "Email is required" });
-
-        const ta = await TA.findOne({ email });
+        const ta = await TA.findOne({ email: req.query.email.toLowerCase().trim() });
         if (!ta) return res.status(404).json({ error: "TA not found" });
-
         return res.status(200).json(ta._id);
     } catch (err) {
         console.error("Error retrieving TA ID:", err);
@@ -44,33 +37,35 @@ taRouter.get("/getTAID", async (req, res) => {
     }
 });
 
-taRouter.post("/addCourse", async (req, res) => {
+taRouter.post("/addCourse", requireRole("ta"), async (req, res) => {
     const { taId, courseId } = req.body;
     try {
         if (!courseId || !taId) {
             return res.status(400).json({ error: "Course ID and TA ID are required!" });
         }
+        if (taId.toString() !== req.mongoUser._id.toString()) {
+            return res.status(403).json({ error: "You can only modify your own TA account" });
+        }
 
-        const ta = await TA.findById(taId);
-        if (!ta) return res.status(404).json({ error: "TA not found" });
-
-        if (ta.courses.some(id => id.toString() === courseId.toString())) {
+        if (req.mongoUser.courses.some(id => id.toString() === courseId.toString())) {
             return res.status(409).json({ error: "Course has already been added!" });
         }
 
-        ta.courses.push(courseId);
-        await ta.save();
-        return res.status(200).json({ message: "Course added successfully to TA!", ta });
+        req.mongoUser.courses.push(courseId);
+        await req.mongoUser.save();
+        return res.status(200).json({ message: "Course added successfully to TA!", ta: req.mongoUser });
     } catch (err) {
         console.error("Error adding course to TA:", err);
         return res.status(500).json({ error: "Internal Server Error" });
     }
 });
 
-taRouter.get("/getCourses/:taId", async (req, res) => {
+taRouter.get("/getCourses/:taId", requireRole("ta"), async (req, res) => {
     try {
         const { taId } = req.params;
-        if (!taId) return res.status(400).json({ error: "TA ID required!" });
+        if (taId !== req.mongoUser._id.toString()) {
+            return res.status(403).json({ error: "You can only access your own courses" });
+        }
 
         const ta = await TA.findById(taId).populate({
             path: "courses",
@@ -79,10 +74,7 @@ taRouter.get("/getCourses/:taId", async (req, res) => {
                 {
                     path: "assignments",
                     select: "title course dueDate submissions marks url",
-                    populate: {
-                        path: "course",
-                        select: "name students"
-                    }
+                    populate: { path: "course", select: "name students" }
                 }
             ]
         });
@@ -95,12 +87,14 @@ taRouter.get("/getCourses/:taId", async (req, res) => {
     }
 });
 
-taRouter.get("/getCheckedSolutions/:taId", async (req, res) => {
+taRouter.get("/getCheckedSolutions/:taId", requireRole("ta"), async (req, res) => {
     try {
         const { taId } = req.params;
-        if (!taId) return res.status(400).json({ error: "TA ID required!" });
+        if (taId !== req.mongoUser._id.toString()) {
+            return res.status(403).json({ error: "You can only access your own checked solutions" });
+        }
 
-        const checkedSolutions = await Solution.find({ gradedBy: taId })
+        const checkedSolutions = await Solution.find({ gradedBy: taId, gradedByRole: "TA" })
             .populate({
                 path: "assignment",
                 select: "title course marks",
