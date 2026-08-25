@@ -1,9 +1,10 @@
 import { Router } from "express";
 import Faculty from "../models/faculty.js";
+import { requireMatchingEmail, requireRole } from "../middleware/roleMiddleware.js";
 
 const facultyRouter = Router();
 
-facultyRouter.post("/createFaculty", async (req, res) => {
+facultyRouter.post("/createFaculty", requireMatchingEmail("body"), async (req, res) => {
     try {
         const faculty = await Faculty.create(req.body);
         return res.status(201).json(faculty);
@@ -13,14 +14,10 @@ facultyRouter.post("/createFaculty", async (req, res) => {
     }
 });
 
-facultyRouter.get("/getFacultyID", async (req, res) => {
+facultyRouter.get("/getFacultyID", requireMatchingEmail("query"), async (req, res) => {
     try {
-        const { email } = req.query;
-        if (!email) return res.status(400).json({ error: "Email is required" });
-
-        const faculty = await Faculty.findOne({ email });
+        const faculty = await Faculty.findOne({ email: req.query.email.toLowerCase().trim() });
         if (!faculty) return res.status(404).json({ error: "Faculty not found" });
-
         return res.status(200).json(faculty._id);
     } catch (err) {
         console.error("Error retrieving faculty ID:", err);
@@ -28,35 +25,36 @@ facultyRouter.get("/getFacultyID", async (req, res) => {
     }
 });
 
-facultyRouter.post("/addCourse", async (req, res) => {
+facultyRouter.post("/addCourse", requireRole("faculty"), async (req, res) => {
     const { facultyId, courseId } = req.body;
     try {
         if (!facultyId || !courseId) {
             return res.status(400).json({ error: "Faculty ID and Course ID both are required!" });
         }
+        if (facultyId.toString() !== req.mongoUser._id.toString()) {
+            return res.status(403).json({ error: "You can only modify your own faculty account" });
+        }
 
-        const faculty = await Faculty.findById(facultyId);
-        if (!faculty) return res.status(404).json({ error: "Faculty not found" });
-
-        if (faculty.courses.some(id => id.toString() === courseId.toString())) {
+        if (req.mongoUser.courses.some(id => id.toString() === courseId.toString())) {
             return res.status(409).json({ error: "Course is already linked to this faculty!" });
         }
 
-        faculty.courses.push(courseId);
-        await faculty.save();
-        return res.status(200).json({ message: "Course added to faculty successfully", faculty });
+        req.mongoUser.courses.push(courseId);
+        await req.mongoUser.save();
+        return res.status(200).json({ message: "Course added to faculty successfully", faculty: req.mongoUser });
     } catch (err) {
         console.error("Error adding course to faculty:", err);
         return res.status(500).json({ error: "Internal server error" });
     }
 });
 
-facultyRouter.get("/getCourses/:facultyId", async (req, res) => {
+facultyRouter.get("/getCourses/:facultyId", requireRole("faculty"), async (req, res) => {
     try {
-        const { facultyId } = req.params;
-        if (!facultyId) return res.status(400).json({ error: "Faculty ID required!" });
+        if (req.params.facultyId !== req.mongoUser._id.toString()) {
+            return res.status(403).json({ error: "You can only access your own courses" });
+        }
 
-        const faculty = await Faculty.findById(facultyId).populate("courses");
+        const faculty = await Faculty.findById(req.params.facultyId).populate("courses");
         if (!faculty) return res.status(404).json({ error: "Faculty not found" });
 
         return res.status(200).json({ courses: faculty.courses });
@@ -66,12 +64,13 @@ facultyRouter.get("/getCourses/:facultyId", async (req, res) => {
     }
 });
 
-facultyRouter.get("/getAssignments/:facultyId", async (req, res) => {
+facultyRouter.get("/getAssignments/:facultyId", requireRole("faculty"), async (req, res) => {
     try {
-        const { facultyId } = req.params;
-        if (!facultyId) return res.status(400).json({ error: "Faculty ID required!" });
+        if (req.params.facultyId !== req.mongoUser._id.toString()) {
+            return res.status(403).json({ error: "You can only access your own assignments" });
+        }
 
-        const faculty = await Faculty.findById(facultyId).populate({
+        const faculty = await Faculty.findById(req.params.facultyId).populate({
             path: "assignments",
             populate: { path: "course", select: "name students" }
         });
@@ -84,23 +83,23 @@ facultyRouter.get("/getAssignments/:facultyId", async (req, res) => {
     }
 });
 
-facultyRouter.post("/addAssignment", async (req, res) => {
+facultyRouter.post("/addAssignment", requireRole("faculty"), async (req, res) => {
     const { facultyId, assignmentId } = req.body;
     try {
         if (!facultyId || !assignmentId) {
             return res.status(400).json({ error: "Faculty ID and Assignment ID both are required!" });
         }
+        if (facultyId.toString() !== req.mongoUser._id.toString()) {
+            return res.status(403).json({ error: "You can only modify your own faculty account" });
+        }
 
-        const faculty = await Faculty.findById(facultyId);
-        if (!faculty) return res.status(404).json({ error: "Faculty not found" });
-
-        if (faculty.assignments.some(id => id.toString() === assignmentId.toString())) {
+        if (req.mongoUser.assignments.some(id => id.toString() === assignmentId.toString())) {
             return res.status(409).json({ error: "Assignment is already linked to this faculty!" });
         }
 
-        faculty.assignments.push(assignmentId);
-        await faculty.save();
-        return res.status(200).json({ message: "Assignment added to faculty successfully", faculty });
+        req.mongoUser.assignments.push(assignmentId);
+        await req.mongoUser.save();
+        return res.status(200).json({ message: "Assignment added to faculty successfully", faculty: req.mongoUser });
     } catch (err) {
         console.error("Error adding assignment to faculty:", err);
         return res.status(500).json({ error: "Internal server error" });
