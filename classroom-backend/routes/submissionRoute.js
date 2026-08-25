@@ -2,6 +2,7 @@ import { Router } from "express";
 import Solution from "../models/solutions.js";
 import Student from "../models/student.js";
 import Assignment from "../models/assignment.js";
+import Course from "../models/courses.js";
 import mongoose from "mongoose";
 import TA from "../models/ta.js";
 import Faculty from "../models/faculty.js";
@@ -18,16 +19,13 @@ submissionRouter.post("/submitSolution", requireRole("student"), async (req, res
     if (!url || !assignmentId || !studentId) {
         return res.status(400).json({ error: "Submission URL, assignment ID and student ID are required" });
     }
-
     if (!idEquals(studentId, req.mongoUser._id)) {
         return res.status(403).json({ error: "You can only submit work for yourself" });
     }
 
     const session = await mongoose.startSession();
-
     try {
         session.startTransaction();
-
         const [student, assignment] = await Promise.all([
             Student.findById(studentId).session(session),
             Assignment.findById(assignmentId).session(session)
@@ -41,7 +39,6 @@ submissionRouter.post("/submitSolution", requireRole("student"), async (req, res
             await session.abortTransaction();
             return res.status(404).json({ error: "Assignment not found" });
         }
-
         if (!includesId(student.courses, assignment.course)) {
             await session.abortTransaction();
             return res.status(403).json({ error: "Student is not enrolled in this course" });
@@ -85,15 +82,12 @@ submissionRouter.get("/getSolution/:solutionId", requireRole("faculty", "ta"), a
 
         if (!submission) return res.status(404).json({ error: "Submission not found" });
 
-        const courseId = submission.assignment.course;
-        let hasAccess = false;
-        if (req.userRole === "faculty") {
-            const course = await (await import("../models/courses.js")).default.findById(courseId).select("faculty");
-            hasAccess = course && idEquals(course.faculty, req.mongoUser._id);
-        } else {
-            const course = await (await import("../models/courses.js")).default.findById(courseId).select("tas");
-            hasAccess = course && includesId(course.tas, req.mongoUser._id);
-        }
+        const course = await Course.findById(submission.assignment.course).select("faculty tas");
+        if (!course) return res.status(404).json({ error: "Course not found" });
+
+        const hasAccess = req.userRole === "faculty"
+            ? idEquals(course.faculty, req.mongoUser._id)
+            : includesId(course.tas, req.mongoUser._id);
 
         if (!hasAccess) return res.status(403).json({ error: "You do not have access to this submission" });
         return res.status(200).json({ submission });
@@ -112,11 +106,9 @@ submissionRouter.put("/gradeSolution/:solutionId", requireRole("faculty", "ta"),
     if (!solutionId || !actualGraderId) {
         return res.status(400).json({ error: "Solution ID and grader ID are required" });
     }
-
     if (!idEquals(actualGraderId, req.mongoUser._id)) {
         return res.status(403).json({ error: "You can only grade as the authenticated user" });
     }
-
     if ((req.userRole === "faculty" && normalizedRole !== "Faculty") || (req.userRole === "ta" && normalizedRole !== "TA")) {
         return res.status(403).json({ error: "Grader role does not match authenticated role" });
     }
@@ -127,17 +119,15 @@ submissionRouter.put("/gradeSolution/:solutionId", requireRole("faculty", "ta"),
     }
 
     const session = await mongoose.startSession();
-
     try {
         session.startTransaction();
-
         const solution = await Solution.findById(solutionId).populate("assignment").session(session);
         if (!solution) {
             await session.abortTransaction();
             return res.status(404).json({ error: "Solution not found" });
         }
 
-        const course = await (await import("../models/courses.js")).default.findById(solution.assignment.course).select("faculty tas").session(session);
+        const course = await Course.findById(solution.assignment.course).select("faculty tas").session(session);
         if (!course) {
             await session.abortTransaction();
             return res.status(404).json({ error: "Course not found" });
@@ -151,7 +141,6 @@ submissionRouter.put("/gradeSolution/:solutionId", requireRole("faculty", "ta"),
             await session.abortTransaction();
             return res.status(403).json({ error: "You are not authorized to grade this course" });
         }
-
         if (numericMarks > solution.assignment.marks) {
             await session.abortTransaction();
             return res.status(400).json({ error: `Marks cannot exceed ${solution.assignment.marks}` });
