@@ -3,14 +3,19 @@ import Assignment from "../models/assignment.js";
 import Course from "../models/courses.js";
 import Faculty from "../models/faculty.js";
 import mongoose from "mongoose";
+import { requireRole } from "../middleware/roleMiddleware.js";
 
 const assignmentRouter = Router();
 
-assignmentRouter.post("/createAssignment", async (req, res) => {
+assignmentRouter.post("/createAssignment", requireRole("faculty"), async (req, res) => {
     const { assignmentData, courseId, facultyId } = req.body;
 
     if (!assignmentData || !courseId || !facultyId) {
         return res.status(400).json({ error: "Assignment data, course ID and faculty ID are required" });
+    }
+
+    if (facultyId.toString() !== req.mongoUser._id.toString()) {
+        return res.status(403).json({ error: "You can only create assignments as yourself" });
     }
 
     if (!assignmentData.title || !assignmentData.title.trim()) {
@@ -44,6 +49,11 @@ assignmentRouter.post("/createAssignment", async (req, res) => {
         if (!faculty) {
             await session.abortTransaction();
             return res.status(404).json({ error: "Faculty not found" });
+        }
+
+        if (course.faculty.toString() !== req.mongoUser._id.toString()) {
+            await session.abortTransaction();
+            return res.status(403).json({ error: "You do not own this course" });
         }
 
         const assignment = new Assignment({
