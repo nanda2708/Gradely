@@ -3,6 +3,7 @@ import mongoose from "mongoose";
 import cors from "cors";
 import dotenv from "dotenv";
 
+import { requireAuth } from "./middleware/authMiddleware.js";
 import facultyRouter from "./routes/facultyRoute.js";
 import studentRouter from "./routes/studentRoute.js";
 import taRouter from "./routes/taRoute.js";
@@ -47,6 +48,9 @@ app.get("/health", (req, res) => {
         database: dbReady ? "connected" : "disconnected"
     });
 });
+
+// Every application API request must come from an authenticated Firebase user.
+app.use(requireAuth);
 
 app.use("/faculty", facultyRouter);
 app.use("/student", studentRouter);
