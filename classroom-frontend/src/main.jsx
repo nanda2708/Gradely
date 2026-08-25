@@ -9,13 +9,20 @@ import { auth } from "./firebase/firebaseConfig";
 const backendUrl = import.meta.env.VITE_BACKEND_URL?.replace(/\/$/, "");
 
 axios.interceptors.request.use(async (config) => {
-    // Keep legacy development URLs working after deployment. Some older
-    // screens still contain http://localhost:5000; normalize those requests
-    // to the configured backend instead of letting production call localhost.
+    // Keep legacy development URLs working after deployment.
     if (backendUrl && typeof config.url === "string") {
         const legacyLocalhost = /^https?:\/\/localhost:5000(?=\/|$)/i;
         if (legacyLocalhost.test(config.url)) {
             config.url = config.url.replace(legacyLocalhost, backendUrl);
+        }
+
+        // Older Gradely screens upload directly to Cloudinary using an
+        // unsigned upload preset. Route those existing FormData requests
+        // through the authenticated Gradely backend instead. This keeps the
+        // UI unchanged while preventing Cloudinary credentials/presets from
+        // being the source of production upload failures.
+        if (config.method?.toLowerCase() === "post" && /^https:\/\/api\.cloudinary\.com\/v1_1\/[^/]+\/auto\/upload/i.test(config.url)) {
+            config.url = `${backendUrl}/upload/file`;
         }
     }
 
