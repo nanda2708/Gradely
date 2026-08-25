@@ -8,12 +8,20 @@ import { Mail, Lock, ArrowRight, Loader2 } from "lucide-react";
 import toast, { Toaster } from "react-hot-toast";
 import axios from "axios";
 
-const getMongoUserId = async (role, email) => {
+const getMongoUserId = async (firebaseUser, role, email) => {
     const normalizedEmail = email.toLowerCase().trim();
     const endpoint = { faculty: "/faculty/getFacultyID", ta: "/ta/getTAID", student: "/student/getStudentID" }[role];
     if (!endpoint) throw new Error("Invalid user role");
 
-    const response = await axios.get(`${import.meta.env.VITE_BACKEND_URL}${endpoint}`, { params: { email: normalizedEmail } });
+    // The lookup endpoints are protected by role-based backend authorization.
+    // Firebase authentication has already completed at this point, so attach
+    // the current ID token rather than making an unauthenticated request.
+    const idToken = await firebaseUser.getIdToken();
+    const response = await axios.get(`${import.meta.env.VITE_BACKEND_URL}${endpoint}`, {
+        params: { email: normalizedEmail },
+        headers: { Authorization: `Bearer ${idToken}` }
+    });
+
     if (!response.data) throw new Error("Gradely account ID was not returned");
     return response.data;
 };
@@ -42,7 +50,7 @@ export default function Login() {
         }
 
         const role = userData.role;
-        const mongoId = await getMongoUserId(role, freshUser.email);
+        const mongoId = await getMongoUserId(freshUser, role, freshUser.email);
 
         login({
             name: userData.name,
