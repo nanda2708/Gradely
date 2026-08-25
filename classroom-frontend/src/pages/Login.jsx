@@ -1,6 +1,6 @@
 import { useState, useContext } from "react";
 import { UserContext } from "../context/ContextProvider";
-import { signInWithEmailAndPassword, signInWithPopup, signOut } from "firebase/auth";
+import { signInWithEmailAndPassword, signInWithPopup, signOut, sendEmailVerification } from "firebase/auth";
 import { auth, provider, db } from "../firebase/firebaseConfig";
 import { useNavigate } from "react-router-dom";
 import { doc, getDoc } from "firebase/firestore";
@@ -10,19 +10,11 @@ import axios from "axios";
 
 const getMongoUserId = async (role, email) => {
     const normalizedEmail = email.toLowerCase().trim();
-    const endpoint = {
-        faculty: "/faculty/getFacultyID",
-        ta: "/ta/getTAID",
-        student: "/student/getStudentID"
-    }[role];
-
+    const endpoint = { faculty: "/faculty/getFacultyID", ta: "/ta/getTAID", student: "/student/getStudentID" }[role];
     if (!endpoint) throw new Error("Invalid user role");
 
-    const response = await axios.get(`${import.meta.env.VITE_BACKEND_URL}${endpoint}`, {
-        params: { email: normalizedEmail }
-    });
-
-    if (!response.data) throw new Error("MongoDB user ID was not returned");
+    const response = await axios.get(`${import.meta.env.VITE_BACKEND_URL}${endpoint}`, { params: { email: normalizedEmail } });
+    if (!response.data) throw new Error("Gradely account ID was not returned");
     return response.data;
 };
 
@@ -35,19 +27,30 @@ export default function Login() {
     const { login } = useContext(UserContext);
     const [email, setEmail] = useState("");
     const [password, setPassword] = useState("");
-    const navigate = useNavigate();
     const [isLoading, setIsLoading] = useState(false);
     const [isGoogleLoading, setIsGoogleLoading] = useState(false);
+    const navigate = useNavigate();
 
     const finishLogin = async (firebaseUser, userData) => {
+        await firebaseUser.reload();
+        const freshUser = auth.currentUser;
+
+        if (!freshUser) throw new Error("Firebase session ended unexpectedly");
+        if (!freshUser.emailVerified) {
+            await sendEmailVerification(freshUser).catch(() => {});
+            throw new Error("Please verify your email address before logging in. A new verification email has been sent.");
+        }
+
         const role = userData.role;
-        const mongoId = await getMongoUserId(role, firebaseUser.email);
+        const mongoId = await getMongoUserId(role, freshUser.email);
 
         login({
             name: userData.name,
             email: userData.email,
             role,
-            id: mongoId
+            id: mongoId,
+            emailVerified: true,
+            phoneVerified: Boolean(userData.phoneVerified)
         });
 
         toast.success("Logged in successfully!");
@@ -76,8 +79,10 @@ export default function Login() {
 
             if (err.code === "auth/invalid-credential") {
                 toast.error("Invalid email or password. Please try again.");
+            } else if (err.code === "auth/too-many-requests") {
+                toast.error("Too many attempts. Please wait and try again.");
             } else if (err.response?.status === 404) {
-                toast.error("Your account exists in Firebase but is missing from Gradely. Please contact the administrator.");
+                toast.error("Your Firebase account exists but the Gradely account is missing.");
             } else {
                 toast.error(err.response?.data?.error || err.message || "Something went wrong while logging in.");
             }
@@ -124,17 +129,11 @@ export default function Login() {
                     <div className="space-y-4">
                         <div>
                             <label className="block text-sm font-medium text-gray-700 mb-1">Email</label>
-                            <div className="relative">
-                                <Mail className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 h-5 w-5" />
-                                <input type="email" placeholder="Enter your email" value={email} onChange={(e) => setEmail(e.target.value)} className="pl-10 w-full py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500" required />
-                            </div>
+                            <div className="relative"><Mail className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 h-5 w-5" /><input type="email" placeholder="Enter your email" value={email} onChange={(e) => setEmail(e.target.value)} className="pl-10 w-full py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500" required /></div>
                         </div>
                         <div>
                             <label className="block text-sm font-medium text-gray-700 mb-1">Password</label>
-                            <div className="relative">
-                                <Lock className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 h-5 w-5" />
-                                <input type="password" placeholder="Enter your password" value={password} onChange={(e) => setPassword(e.target.value)} className="pl-10 w-full py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500" required />
-                            </div>
+                            <div className="relative"><Lock className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 h-5 w-5" /><input type="password" placeholder="Enter your password" value={password} onChange={(e) => setPassword(e.target.value)} className="pl-10 w-full py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500" required /></div>
                         </div>
                     </div>
 
@@ -144,18 +143,13 @@ export default function Login() {
                 </form>
 
                 <div className="mt-6">
-                    <div className="relative">
-                        <div className="absolute inset-0 flex items-center"><div className="w-full border-t border-gray-300" /></div>
-                        <div className="relative flex justify-center text-sm"><span className="px-2 bg-white text-gray-500">Or continue with</span></div>
-                    </div>
+                    <div className="relative"><div className="absolute inset-0 flex items-center"><div className="w-full border-t border-gray-300" /></div><div className="relative flex justify-center text-sm"><span className="px-2 bg-white text-gray-500">Or continue with</span></div></div>
                     <button onClick={logInWithGoogle} disabled={isLoading || isGoogleLoading} className="mt-4 w-full flex items-center justify-center gap-3 px-4 py-2 border border-gray-300 rounded-lg hover:bg-gray-50 focus:ring-4 focus:ring-gray-100">
                         {isGoogleLoading ? <><Loader2 className="h-5 w-5 animate-spin" />Signing in...</> : <><img src="https://www.gstatic.com/firebasejs/ui/2.0.0/images/auth/google.svg" alt="Google" className="w-5 h-5" />Sign in with Google</>}
                     </button>
                 </div>
 
-                <p className="mt-6 text-center text-sm text-gray-600">
-                    Don't have an account? <a href="/signup" className="font-medium text-blue-600 hover:text-blue-500">Sign up</a>
-                </p>
+                <p className="mt-6 text-center text-sm text-gray-600">Don't have an account? <a href="/signup" className="font-medium text-blue-600 hover:text-blue-500">Sign up</a></p>
             </div>
         </div>
     );
