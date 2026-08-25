@@ -18,8 +18,6 @@ courseRouter.post("/createCourse", requireRole("faculty"), async (req, res) => {
         }
 
         const course = await Course.create({ name: name.trim(), faculty });
-        req.mongoUser.courses.addToSet(course._id);
-        await req.mongoUser.save();
         return res.status(201).json(course);
     } catch (err) {
         console.error("Error creating course in DB:", err);
