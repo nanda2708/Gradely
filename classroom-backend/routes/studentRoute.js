@@ -1,10 +1,12 @@
 import { Router } from "express";
 import Student from "../models/student.js";
+import Course from "../models/courses.js";
 import Assignment from "../models/assignment.js";
 import Solution from "../models/solutions.js";
 import { requireMatchingEmail, requireRole } from "../middleware/roleMiddleware.js";
 
 const studentRouter = Router();
+const idEquals = (a, b) => a?.toString() === b?.toString();
 
 studentRouter.post("/createStudent", requireMatchingEmail("body"), async (req, res) => {
     try {
@@ -27,24 +29,35 @@ studentRouter.get("/getStudentID", requireMatchingEmail("query"), async (req, re
     }
 });
 
-studentRouter.post("/addCourse", requireRole("student"), async (req, res) => {
+studentRouter.post("/addCourse", requireRole("student", "faculty"), async (req, res) => {
     const { courseId, studentId } = req.body;
 
     try {
         if (!courseId || !studentId) {
             return res.status(400).json({ error: "Course ID and Student ID both are required!" });
         }
-        if (studentId.toString() !== req.mongoUser._id.toString()) {
-            return res.status(403).json({ error: "You can only modify your own student account" });
+
+        const course = await Course.findById(courseId).select("faculty students");
+        if (!course) return res.status(404).json({ error: "Course not found" });
+
+        if (req.userRole === "student") {
+            if (!idEquals(studentId, req.mongoUser._id)) {
+                return res.status(403).json({ error: "You can only modify your own student account" });
+            }
+        } else if (!idEquals(course.faculty, req.mongoUser._id)) {
+            return res.status(403).json({ error: "You do not own this course" });
         }
 
-        if (req.mongoUser.courses.some(id => id.toString() === courseId.toString())) {
-            return res.status(409).json({ error: "Course has already been added!" });
+        const student = await Student.findById(studentId);
+        if (!student) return res.status(404).json({ error: "Student not found" });
+
+        if (student.courses.some(id => idEquals(id, courseId))) {
+            return res.status(200).json({ message: "Course already linked to student", student });
         }
 
-        req.mongoUser.courses.push(courseId);
-        await req.mongoUser.save();
-        return res.status(200).json({ message: "Course added successfully to student!", student: req.mongoUser });
+        student.courses.addToSet(courseId);
+        await student.save();
+        return res.status(200).json({ message: "Course added successfully to student!", student });
     } catch (err) {
         console.error("Error adding course to student:", err);
         return res.status(500).json({ error: "Internal Server Error" });
@@ -130,7 +143,7 @@ studentRouter.get("/:studentId/course/:courseId/submissions", requireRole("stude
             .populate("gradedBy", "name")
             .sort({ submittedDate: -1 });
 
-        const submittedAssignments = submissions.map(submission => submission.assignment._id);
+        const submittedAssignments = [...new Set(submissions.map(submission => submission.assignment._id.toString()))];
         return res.status(200).json({ submissions, submittedAssignments });
     } catch (err) {
         console.error("Error getting student course submissions:", err);
