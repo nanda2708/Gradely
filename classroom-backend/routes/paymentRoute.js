@@ -45,7 +45,7 @@ paymentRouter.post("/create-order", requireRole("student", "faculty", "ta"), asy
                     user_id: req.mongoUser._id.toString(),
                     environment: process.env.RAZORPAY_ENVIRONMENT || "test"
                 },
-                payment_capture: 1
+                capture: "automatic"
             })
         });
 
