@@ -7,7 +7,6 @@ import { requireMatchingEmail, requireRole } from "../middleware/roleMiddleware.
 const taRouter = Router();
 const idEquals = (a, b) => a?.toString() === b?.toString();
 
-
 taRouter.post("/createTA", requireMatchingEmail("body"), async (req, res) => {
     try {
         const ta = await TA.create(req.body);
@@ -29,9 +28,13 @@ taRouter.get("/getTAData", requireMatchingEmail("query"), async (req, res) => {
     }
 });
 
-taRouter.get("/getTAID", requireMatchingEmail("query"), async (req, res) => {
+// Faculty uses this lookup when enrolling a TA into a course.
+taRouter.get("/getTAID", requireRole("faculty"), async (req, res) => {
     try {
-        const ta = await TA.findOne({ email: req.query.email.toLowerCase().trim() });
+        const email = req.query.email?.toLowerCase().trim();
+        if (!email) return res.status(400).json({ error: "TA email is required" });
+
+        const ta = await TA.findOne({ email });
         if (!ta) return res.status(404).json({ error: "TA not found" });
         return res.status(200).json(ta._id);
     } catch (err) {
@@ -40,8 +43,6 @@ taRouter.get("/getTAID", requireMatchingEmail("query"), async (req, res) => {
     }
 });
 
-// A TA can maintain their own course list, while a Faculty can add a TA
-// to a course and must also update the TA's reverse relationship.
 taRouter.post("/addCourse", requireRole("ta", "faculty"), async (req, res) => {
     const { taId, courseId } = req.body;
     try {
