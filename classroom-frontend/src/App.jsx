@@ -11,6 +11,7 @@ import FacultyCourse from "./pages/FacultyCourse";
 import TACourse from "./pages/TACourse";
 import StudentCourse from "./pages/StudentCourse";
 import CheckSolution from "./pages/CheckSolution";
+import PaymentTest from "./pages/PaymentTest";
 
 const App = () => (
     <Router>
@@ -78,6 +79,15 @@ const App = () => (
                 element={
                     <ProtectedRoute roles={["faculty", "ta"]}>
                         <CheckSolution />
+                    </ProtectedRoute>
+                }
+            />
+
+            <Route
+                path="/payment-test"
+                element={
+                    <ProtectedRoute roles={["faculty", "ta", "student"]}>
+                        <PaymentTest />
                     </ProtectedRoute>
                 }
             />
