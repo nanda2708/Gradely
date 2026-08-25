@@ -19,10 +19,8 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: 20
-          cache: npm
-          cache-dependency-path: classroom-backend/package-lock.json
       - name: Install dependencies
-        run: npm ci
+        run: npm install
       - name: Syntax check
         run: |
           find . -name "*.js" -not -path "./node_modules/*" -print0 | xargs -0 -n1 node --check
@@ -39,10 +37,8 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: 20
-          cache: npm
-          cache-dependency-path: classroom-frontend/package-lock.json
       - name: Install dependencies
-        run: npm ci
+        run: npm install
       - name: Build
         run: npm run build
         env:
