@@ -69,6 +69,9 @@ export const ContextProvider = ({ children }) => {
 
                 if (!firebaseUser.emailVerified) {
                     if (!active) return;
+                    // Keep Firebase auth alive during the signup verification
+                    // screen. SignUp.jsx needs auth.currentUser to finish the
+                    // account after the email is verified.
                     setUser(null);
                     localStorage.removeItem("user");
                     setLoading(false);
@@ -87,9 +90,12 @@ export const ContextProvider = ({ children }) => {
                 setUser(null);
                 localStorage.removeItem("user");
 
-                // A Firebase session without a valid Gradely account should not
-                // be allowed into protected application routes.
-                if (err.status === 401 || err.status === 403 || err.status === 404) {
+                // An authenticated Firebase user may legitimately exist for a
+                // short time before the MongoDB Gradely account is created
+                // (the email/phone verification signup flow). Therefore a 404
+                // must NOT sign the Firebase user out. Only invalidate the
+                // Firebase session for actual authentication failures.
+                if (err.status === 401 || err.status === 403) {
                     await signOut(auth).catch(() => {});
                 }
             } finally {
