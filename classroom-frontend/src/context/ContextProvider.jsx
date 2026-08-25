@@ -7,31 +7,44 @@ export const UserContext = createContext();
 const backendUrl = import.meta.env.VITE_BACKEND_URL?.replace(/\/$/, "");
 
 const getAuthenticatedGradelyUser = async (firebaseUser) => {
-    if (!backendUrl) {
-        throw new Error("VITE_BACKEND_URL is not configured");
-    }
+    if (!backendUrl) throw new Error("VITE_BACKEND_URL is not configured");
 
-    const idToken = await firebaseUser.getIdToken();
-    const response = await fetch(`${backendUrl}/auth/me`, {
-        headers: {
-            Authorization: `Bearer ${idToken}`,
-            "Content-Type": "application/json"
-        }
-    });
+    const idToken = await firebaseUser.getIdToken(true);
+    const config = { headers: { Authorization: `Bearer ${idToken}` } };
 
-    let data = null;
     try {
-        data = await response.json();
-    } catch {
-        data = null;
-    }
+        const response = await fetch(`${backendUrl}/auth/me`, config);
+        const data = await response.json().catch(() => null);
 
-    if (!response.ok) {
+        if (response.ok) return normalizeGradelyUser(data, firebaseUser);
+
+        if (response.status === 404) {
+            const provisionResponse = await fetch(`${backendUrl}/auth/provision`, {
+                method: "POST",
+                headers: {
+                    Authorization: `Bearer ${idToken}`,
+                    "Content-Type": "application/json"
+                }
+            });
+            const provisioned = await provisionResponse.json().catch(() => null);
+            if (!provisionResponse.ok) {
+                const error = new Error(provisioned?.error || `Account provisioning failed (${provisionResponse.status})`);
+                error.status = provisionResponse.status;
+                throw error;
+            }
+            return normalizeGradelyUser(provisioned, firebaseUser);
+        }
+
         const error = new Error(data?.error || `Account lookup failed (${response.status})`);
         error.status = response.status;
         throw error;
+    } catch (err) {
+        if (err.status) throw err;
+        throw new Error(err.message || "Unable to restore Gradely account");
     }
+};
 
+const normalizeGradelyUser = (data, firebaseUser) => {
     if (!data?.id || !data?.role || !["faculty", "ta", "student"].includes(data.role)) {
         throw new Error("Authenticated Gradely account is incomplete");
     }
@@ -69,9 +82,6 @@ export const ContextProvider = ({ children }) => {
 
                 if (!firebaseUser.emailVerified) {
                     if (!active) return;
-                    // Keep Firebase auth alive during the signup verification
-                    // screen. SignUp.jsx needs auth.currentUser to finish the
-                    // account after the email is verified.
                     setUser(null);
                     localStorage.removeItem("user");
                     setLoading(false);
@@ -79,22 +89,20 @@ export const ContextProvider = ({ children }) => {
                 }
 
                 const gradelyUser = await getAuthenticatedGradelyUser(firebaseUser);
-
                 if (!active) return;
+
                 setUser(gradelyUser);
                 localStorage.setItem("user", JSON.stringify(gradelyUser));
             } catch (err) {
                 console.error("Failed to restore Gradely session:", err);
-
                 if (!active) return;
+
                 setUser(null);
                 localStorage.removeItem("user");
 
-                // An authenticated Firebase user may legitimately exist for a
-                // short time before the MongoDB Gradely account is created
-                // (the email/phone verification signup flow). Therefore a 404
-                // must NOT sign the Firebase user out. Only invalidate the
-                // Firebase session for actual authentication failures.
+                // Do not sign out an otherwise valid Firebase user merely because
+                // an old Gradely/Mongo record needs provisioning. Only true auth
+                // failures invalidate the Firebase session.
                 if (err.status === 401 || err.status === 403) {
                     await signOut(auth).catch(() => {});
                 }
