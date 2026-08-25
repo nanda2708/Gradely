@@ -1,53 +1,75 @@
 import { Router } from "express";
 import Assignment from "../models/assignment.js";
-import Course from "../models/courses.js"
-import Faculty from "../models/faculty.js"
+import Course from "../models/courses.js";
+import Faculty from "../models/faculty.js";
 import mongoose from "mongoose";
 
-const assignmentRouter = Router()
+const assignmentRouter = Router();
 
 assignmentRouter.post("/createAssignment", async (req, res) => {
     const { assignmentData, courseId, facultyId } = req.body;
 
     if (!assignmentData || !courseId || !facultyId) {
-        return res.status(400).json({ error: "Missing required data" });
+        return res.status(400).json({ error: "Assignment data, course ID and faculty ID are required" });
+    }
+
+    if (!assignmentData.title || !assignmentData.title.trim()) {
+        return res.status(400).json({ error: "Assignment title is required" });
+    }
+
+    const marks = Number(assignmentData.marks);
+    if (!Number.isFinite(marks) || marks <= 0) {
+        return res.status(400).json({ error: "Assignment marks must be greater than 0" });
+    }
+
+    if (assignmentData.course && assignmentData.course.toString() !== courseId.toString()) {
+        return res.status(400).json({ error: "Assignment course does not match course ID" });
     }
 
     const session = await mongoose.startSession();
-    session.startTransaction();
+
     try {
-        const assignment = new Assignment(assignmentData);
-        const savedAssignment = await assignment.save({session})
+        session.startTransaction();
 
-        const course = await Course.findByIdAndUpdate(
-            courseId,
-            {$push: {assignments: savedAssignment._id}},
-            {new: true, session}
-        )
+        const [course, faculty] = await Promise.all([
+            Course.findById(courseId).session(session),
+            Faculty.findById(facultyId).session(session)
+        ]);
 
-        if(!course) return res.status(400).json({error: "Course not found"})
+        if (!course) {
+            await session.abortTransaction();
+            return res.status(404).json({ error: "Course not found" });
+        }
 
-        
-        const faculty = await Faculty.findByIdAndUpdate(
-            facultyId,
-            {$push: {assignments: savedAssignment._id}},
-            {new: true, session}
-        )
+        if (!faculty) {
+            await session.abortTransaction();
+            return res.status(404).json({ error: "Faculty not found" });
+        }
 
-        if(!faculty) return res.status(400).json({error: "Faculty not found"})
-        await session.commitTransaction()
+        const assignment = new Assignment({
+            ...assignmentData,
+            title: assignmentData.title.trim(),
+            marks,
+            course: courseId
+        });
 
+        const savedAssignment = await assignment.save({ session });
 
-        res.status(200).json(savedAssignment);
+        course.assignments.addToSet(savedAssignment._id);
+        faculty.assignments.addToSet(savedAssignment._id);
+
+        await course.save({ session });
+        await faculty.save({ session });
+
+        await session.commitTransaction();
+        return res.status(201).json(savedAssignment);
+    } catch (err) {
+        if (session.inTransaction()) await session.abortTransaction();
+        console.error("Error creating assignment:", err);
+        return res.status(500).json({ error: "Failed to save assignment data" });
+    } finally {
+        await session.endSession();
     }
-    catch(err) {
-        await session.abortTransaction()
-        console.error(err);
-        res.status(500).json({ error: "Failed to save assignment data" });
-    }
-    finally {
-        await session.endSession()
-    }
-})
+});
 
-export default assignmentRouter
+export default assignmentRouter;
