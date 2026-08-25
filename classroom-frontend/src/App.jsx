@@ -12,6 +12,7 @@ import TACourse from "./pages/TACourse";
 import StudentCourse from "./pages/StudentCourse";
 import CheckSolution from "./pages/CheckSolution";
 import PaymentTest from "./pages/PaymentTest";
+import AIHelper from "./pages/AIHelper";
 
 const App = () => (
     <Router>
@@ -22,74 +23,39 @@ const App = () => (
 
             <Route
                 path="/faculty"
-                element={
-                    <ProtectedRoute roles={["faculty"]}>
-                        <FacultyDashboard />
-                    </ProtectedRoute>
-                }
+                element={<ProtectedRoute roles={["faculty"]}><FacultyDashboard /></ProtectedRoute>}
             />
-
             <Route
                 path="/ta"
-                element={
-                    <ProtectedRoute roles={["ta"]}>
-                        <TADashboard />
-                    </ProtectedRoute>
-                }
+                element={<ProtectedRoute roles={["ta"]}><TADashboard /></ProtectedRoute>}
             />
-
             <Route
                 path="/student"
-                element={
-                    <ProtectedRoute roles={["student"]}>
-                        <StudentDashboard />
-                    </ProtectedRoute>
-                }
+                element={<ProtectedRoute roles={["student"]}><StudentDashboard /></ProtectedRoute>}
             />
-
             <Route
                 path="/faculty/courses/:courseId"
-                element={
-                    <ProtectedRoute roles={["faculty"]}>
-                        <FacultyCourse />
-                    </ProtectedRoute>
-                }
+                element={<ProtectedRoute roles={["faculty"]}><FacultyCourse /></ProtectedRoute>}
             />
-
             <Route
                 path="/ta/courses/:courseId"
-                element={
-                    <ProtectedRoute roles={["ta"]}>
-                        <TACourse />
-                    </ProtectedRoute>
-                }
+                element={<ProtectedRoute roles={["ta"]}><TACourse /></ProtectedRoute>}
             />
-
             <Route
                 path="/student/courses/:courseId"
-                element={
-                    <ProtectedRoute roles={["student"]}>
-                        <StudentCourse />
-                    </ProtectedRoute>
-                }
+                element={<ProtectedRoute roles={["student"]}><StudentCourse /></ProtectedRoute>}
             />
-
             <Route
                 path="/checkSubmission/:assignmentId/:submissionId"
-                element={
-                    <ProtectedRoute roles={["faculty", "ta"]}>
-                        <CheckSolution />
-                    </ProtectedRoute>
-                }
+                element={<ProtectedRoute roles={["faculty", "ta"]}><CheckSolution /></ProtectedRoute>}
             />
-
             <Route
                 path="/payment-test"
-                element={
-                    <ProtectedRoute roles={["faculty", "ta", "student"]}>
-                        <PaymentTest />
-                    </ProtectedRoute>
-                }
+                element={<ProtectedRoute roles={["faculty", "ta", "student"]}><PaymentTest /></ProtectedRoute>}
+            />
+            <Route
+                path="/student/ai-helper"
+                element={<ProtectedRoute roles={["student"]}><AIHelper /></ProtectedRoute>}
             />
 
             <Route path="/unauthorized" element={<Unauthorized />} />
