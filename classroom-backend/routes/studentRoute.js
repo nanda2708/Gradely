@@ -18,9 +18,13 @@ studentRouter.post("/createStudent", requireMatchingEmail("body"), async (req, r
     }
 });
 
-studentRouter.get("/getStudentID", requireMatchingEmail("query"), async (req, res) => {
+// Faculty uses this lookup when enrolling a student into a course.
+studentRouter.get("/getStudentID", requireRole("faculty"), async (req, res) => {
     try {
-        const student = await Student.findOne({ email: req.query.email.toLowerCase().trim() });
+        const email = req.query.email?.toLowerCase().trim();
+        if (!email) return res.status(400).json({ error: "Student email is required" });
+
+        const student = await Student.findOne({ email });
         if (!student) return res.status(404).json({ error: "Student not found" });
         return res.status(200).json(student._id);
     } catch (err) {
