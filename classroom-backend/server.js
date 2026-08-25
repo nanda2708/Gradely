@@ -11,8 +11,9 @@ import taRouter from "./routes/taRoute.js";
 import courseRouter from "./routes/courseRoute.js";
 import assignmentRouter from "./routes/assignmentRoute.js";
 import submissionRouter from "./routes/submissionRoute.js";
-import paymentRouter from "./routes/paymentRoute.js";
 import aiRouter from "./routes/aiRoute.js";
+import paymentRouter from "./routes/paymentRoute.js";
+import uploadRouter from "./routes/uploadRoute.js";
 
 dotenv.config();
 
@@ -55,14 +56,15 @@ app.get("/health", (req, res) => {
 app.use(requireAuth);
 
 app.use("/auth", authRouter);
+app.use("/upload", uploadRouter);
 app.use("/faculty", facultyRouter);
 app.use("/student", studentRouter);
 app.use("/ta", taRouter);
 app.use("/course", courseRouter);
 app.use("/assignment", assignmentRouter);
 app.use("/submission", submissionRouter);
+app.use("/student/ai-helper", aiRouter);
 app.use("/payment", paymentRouter);
-app.use("/ai", aiRouter);
 
 app.use((req, res) => {
     res.status(404).json({ error: "Route not found" });
