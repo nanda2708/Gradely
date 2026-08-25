@@ -10,6 +10,7 @@ import taRouter from "./routes/taRoute.js";
 import courseRouter from "./routes/courseRoute.js";
 import assignmentRouter from "./routes/assignmentRoute.js";
 import submissionRouter from "./routes/submissionRoute.js";
+import paymentRouter from "./routes/paymentRoute.js";
 
 dotenv.config();
 
@@ -49,7 +50,6 @@ app.get("/health", (req, res) => {
     });
 });
 
-// Every application API request must come from an authenticated Firebase user.
 app.use(requireAuth);
 
 app.use("/faculty", facultyRouter);
@@ -58,6 +58,7 @@ app.use("/ta", taRouter);
 app.use("/course", courseRouter);
 app.use("/assignment", assignmentRouter);
 app.use("/submission", submissionRouter);
+app.use("/payment", paymentRouter);
 
 app.use((req, res) => {
     res.status(404).json({ error: "Route not found" });
