@@ -1,4 +1,5 @@
 import { useState, useContext } from "react";
+import { UserContext } from "../context/ContextProvider";
 import { signInWithEmailAndPassword, signInWithPopup, signOut, sendEmailVerification } from "firebase/auth";
 import { auth, provider, db } from "../firebase/firebaseConfig";
 import { useNavigate } from "react-router-dom";
@@ -20,9 +21,6 @@ const getMongoUser = async (firebaseUser) => {
         return response.data;
     } catch (err) {
         if (err.response?.status !== 404) throw err;
-
-        // Repair older accounts where Firebase + Firestore signup succeeded
-        // but the MongoDB record was not created.
         const provisioned = await axios.post(`${backendUrl}/auth/provision`, {}, config);
         return provisioned.data;
     }
@@ -41,12 +39,16 @@ export default function Login() {
     const [isGoogleLoading, setIsGoogleLoading] = useState(false);
     const navigate = useNavigate();
 
-    const finishLogin = async (firebaseUser, userData) => {
+    const finishLogin = async (firebaseUser, userData = {}) => {
         await firebaseUser.reload();
         const freshUser = auth.currentUser;
         if (!freshUser) throw new Error("Firebase session ended unexpectedly");
 
-        if (!freshUser.emailVerified && userData?.provider !== "google.com") {
+        const isGoogleAccount = firebaseUser.providerData?.some(
+            providerInfo => providerInfo.providerId === "google.com"
+        );
+
+        if (!freshUser.emailVerified && !isGoogleAccount) {
             await sendEmailVerification(freshUser).catch(() => {});
             throw new Error("Please verify your email address before logging in. A new verification email has been sent.");
         }
@@ -58,11 +60,11 @@ export default function Login() {
         }
 
         login({
-            name: mongoUser.name || userData.name,
+            name: mongoUser.name || userData.name || freshUser.displayName || "User",
             email: mongoUser.email || freshUser.email,
             role,
             id: mongoUser.id,
-            emailVerified: Boolean(freshUser.emailVerified),
+            emailVerified: Boolean(freshUser.emailVerified || isGoogleAccount),
             phoneVerified: Boolean(mongoUser.phoneVerified ?? userData.phoneVerified)
         });
 
@@ -100,12 +102,14 @@ export default function Login() {
         try {
             const result = await signInWithPopup(auth, provider);
             const firebaseUser = result.user;
-            const normalizedEmail = firebaseUser.email.toLowerCase().trim();
-            const userDoc = await getDoc(doc(db, "users", normalizedEmail));
+            const normalizedEmail = firebaseUser.email?.toLowerCase().trim();
 
+            if (!normalizedEmail) throw new Error("Google did not provide an email address");
+
+            const userDoc = await getDoc(doc(db, "users", normalizedEmail));
             if (!userDoc.exists()) {
                 await signOut(auth);
-                toast.error("You are not registered. Please sign up first.");
+                toast.error("This Google account is not registered in Gradely. Please sign up first.");
                 navigate("/signup");
                 return;
             }
