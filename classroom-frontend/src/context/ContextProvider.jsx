@@ -9,10 +9,19 @@ export const ContextProvider = ({ children }) => {
     const [loading, setLoading] = useState(true);
 
     useEffect(() => {
-        const unsubscribe = onAuthStateChanged(auth, (firebaseUser) => {
+        const unsubscribe = onAuthStateChanged(auth, async (firebaseUser) => {
             const storedUser = localStorage.getItem("user");
 
             if (!firebaseUser) {
+                setUser(null);
+                localStorage.removeItem("user");
+                setLoading(false);
+                return;
+            }
+
+            await firebaseUser.reload().catch(() => {});
+
+            if (!firebaseUser.emailVerified) {
                 setUser(null);
                 localStorage.removeItem("user");
                 setLoading(false);
@@ -23,7 +32,7 @@ export const ContextProvider = ({ children }) => {
                 try {
                     const parsedUser = JSON.parse(storedUser);
                     if (parsedUser?.email?.toLowerCase() === firebaseUser.email?.toLowerCase()) {
-                        setUser(parsedUser);
+                        setUser({ ...parsedUser, emailVerified: true });
                     } else {
                         localStorage.removeItem("user");
                         setUser(null);
