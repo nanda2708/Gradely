@@ -8,21 +8,16 @@ import { Mail, Lock, ArrowRight, Loader2 } from "lucide-react";
 import toast, { Toaster } from "react-hot-toast";
 import axios from "axios";
 
-const getMongoUserId = async (firebaseUser, role, email) => {
-    const normalizedEmail = email.toLowerCase().trim();
-    const endpoint = { faculty: "/faculty/getFacultyID", ta: "/ta/getTAID", student: "/student/getStudentID" }[role];
-    if (!endpoint) throw new Error("Invalid user role");
-
-    // The lookup endpoints are protected by role-based backend authorization.
-    // Firebase authentication has already completed at this point, so attach
-    // the current ID token rather than making an unauthenticated request.
+const getMongoUser = async (firebaseUser) => {
     const idToken = await firebaseUser.getIdToken();
-    const response = await axios.get(`${import.meta.env.VITE_BACKEND_URL}${endpoint}`, {
-        params: { email: normalizedEmail },
+    const response = await axios.get(`${import.meta.env.VITE_BACKEND_URL}/auth/me`, {
         headers: { Authorization: `Bearer ${idToken}` }
     });
 
-    if (!response.data) throw new Error("Gradely account ID was not returned");
+    if (!response.data?.id || !response.data?.role) {
+        throw new Error("Gradely account information was not returned");
+    }
+
     return response.data;
 };
 
@@ -49,16 +44,20 @@ export default function Login() {
             throw new Error("Please verify your email address before logging in. A new verification email has been sent.");
         }
 
-        const role = userData.role;
-        const mongoId = await getMongoUserId(freshUser, role, freshUser.email);
+        const mongoUser = await getMongoUser(freshUser);
+        const role = mongoUser.role || userData.role;
+
+        if (!role || !["faculty", "ta", "student"].includes(role)) {
+            throw new Error("Your Gradely account does not have a valid role");
+        }
 
         login({
-            name: userData.name,
-            email: userData.email,
+            name: mongoUser.name || userData.name,
+            email: mongoUser.email || freshUser.email,
             role,
-            id: mongoId,
+            id: mongoUser.id,
             emailVerified: true,
-            phoneVerified: Boolean(userData.phoneVerified)
+            phoneVerified: Boolean(mongoUser.phoneVerified ?? userData.phoneVerified)
         });
 
         toast.success("Logged in successfully!");
