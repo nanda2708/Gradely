@@ -63,8 +63,10 @@ export default function PaymentTest() {
                             razorpayPaymentId: response.razorpay_payment_id,
                             razorpaySignature: response.razorpay_signature
                         });
+                        setPaying(false);
                         toast.success("Test payment verified successfully!");
                     } catch (err) {
+                        setPaying(false);
                         toast.error(err.response?.data?.error || "Payment verification failed");
                     }
                 },
