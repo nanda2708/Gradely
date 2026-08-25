@@ -5,14 +5,22 @@ import Assignment from "../models/assignment.js";
 import mongoose from "mongoose";
 import TA from "../models/ta.js";
 import Faculty from "../models/faculty.js";
+import { requireRole } from "../middleware/roleMiddleware.js";
 
 const submissionRouter = Router();
 
-submissionRouter.post("/submitSolution", async (req, res) => {
+const idEquals = (a, b) => a?.toString() === b?.toString();
+const includesId = (array = [], id) => array.some(item => idEquals(item, id));
+
+submissionRouter.post("/submitSolution", requireRole("student"), async (req, res) => {
     const { filename, url, publicId, assignmentId, studentId } = req.body;
 
     if (!url || !assignmentId || !studentId) {
         return res.status(400).json({ error: "Submission URL, assignment ID and student ID are required" });
+    }
+
+    if (!idEquals(studentId, req.mongoUser._id)) {
+        return res.status(403).json({ error: "You can only submit work for yourself" });
     }
 
     const session = await mongoose.startSession();
@@ -29,14 +37,12 @@ submissionRouter.post("/submitSolution", async (req, res) => {
             await session.abortTransaction();
             return res.status(404).json({ error: "Student not found" });
         }
-
         if (!assignment) {
             await session.abortTransaction();
             return res.status(404).json({ error: "Assignment not found" });
         }
 
-        const enrolled = student.courses.some(id => id.toString() === assignment.course.toString());
-        if (!enrolled) {
+        if (!includesId(student.courses, assignment.course)) {
             await session.abortTransaction();
             return res.status(403).json({ error: "Student is not enrolled in this course" });
         }
@@ -51,10 +57,8 @@ submissionRouter.post("/submitSolution", async (req, res) => {
         });
 
         await solution.save({ session });
-
         student.submissions.addToSet(solution._id);
         assignment.submissions.addToSet(solution._id);
-
         await student.save({ session });
         await assignment.save({ session });
 
@@ -69,7 +73,7 @@ submissionRouter.post("/submitSolution", async (req, res) => {
     }
 });
 
-submissionRouter.get("/getSolution/:solutionId", async (req, res) => {
+submissionRouter.get("/getSolution/:solutionId", requireRole("faculty", "ta"), async (req, res) => {
     try {
         const { solutionId } = req.params;
         if (!solutionId) return res.status(400).json({ error: "Submission ID required!" });
@@ -81,6 +85,17 @@ submissionRouter.get("/getSolution/:solutionId", async (req, res) => {
 
         if (!submission) return res.status(404).json({ error: "Submission not found" });
 
+        const courseId = submission.assignment.course;
+        let hasAccess = false;
+        if (req.userRole === "faculty") {
+            const course = await (await import("../models/courses.js")).default.findById(courseId).select("faculty");
+            hasAccess = course && idEquals(course.faculty, req.mongoUser._id);
+        } else {
+            const course = await (await import("../models/courses.js")).default.findById(courseId).select("tas");
+            hasAccess = course && includesId(course.tas, req.mongoUser._id);
+        }
+
+        if (!hasAccess) return res.status(403).json({ error: "You do not have access to this submission" });
         return res.status(200).json({ submission });
     } catch (err) {
         console.error("Error getting submission:", err);
@@ -88,7 +103,7 @@ submissionRouter.get("/getSolution/:solutionId", async (req, res) => {
     }
 });
 
-submissionRouter.put("/gradeSolution/:solutionId", async (req, res) => {
+submissionRouter.put("/gradeSolution/:solutionId", requireRole("faculty", "ta"), async (req, res) => {
     const { solutionId } = req.params;
     const { grade, marks, feedback, graderId, graderRole, taId } = req.body;
     const actualGraderId = graderId || taId;
@@ -96,6 +111,14 @@ submissionRouter.put("/gradeSolution/:solutionId", async (req, res) => {
 
     if (!solutionId || !actualGraderId) {
         return res.status(400).json({ error: "Solution ID and grader ID are required" });
+    }
+
+    if (!idEquals(actualGraderId, req.mongoUser._id)) {
+        return res.status(403).json({ error: "You can only grade as the authenticated user" });
+    }
+
+    if ((req.userRole === "faculty" && normalizedRole !== "Faculty") || (req.userRole === "ta" && normalizedRole !== "TA")) {
+        return res.status(403).json({ error: "Grader role does not match authenticated role" });
     }
 
     const numericMarks = Number(marks);
@@ -108,13 +131,25 @@ submissionRouter.put("/gradeSolution/:solutionId", async (req, res) => {
     try {
         session.startTransaction();
 
-        const solution = await Solution.findById(solutionId)
-            .populate("assignment")
-            .session(session);
-
+        const solution = await Solution.findById(solutionId).populate("assignment").session(session);
         if (!solution) {
             await session.abortTransaction();
             return res.status(404).json({ error: "Solution not found" });
+        }
+
+        const course = await (await import("../models/courses.js")).default.findById(solution.assignment.course).select("faculty tas").session(session);
+        if (!course) {
+            await session.abortTransaction();
+            return res.status(404).json({ error: "Course not found" });
+        }
+
+        const hasAccess = normalizedRole === "Faculty"
+            ? idEquals(course.faculty, req.mongoUser._id)
+            : includesId(course.tas, req.mongoUser._id);
+
+        if (!hasAccess) {
+            await session.abortTransaction();
+            return res.status(403).json({ error: "You are not authorized to grade this course" });
         }
 
         if (numericMarks > solution.assignment.marks) {
@@ -136,15 +171,10 @@ submissionRouter.put("/gradeSolution/:solutionId", async (req, res) => {
         solution.gradedByRole = normalizedRole;
         solution.checkedDate = new Date();
         solution.status = "graded";
-
         await solution.save({ session });
 
         if (normalizedRole === "TA") {
-            await TA.findByIdAndUpdate(
-                actualGraderId,
-                { $addToSet: { checked: solution._id } },
-                { session }
-            );
+            await TA.findByIdAndUpdate(actualGraderId, { $addToSet: { checked: solution._id } }, { session });
         }
 
         await session.commitTransaction();
