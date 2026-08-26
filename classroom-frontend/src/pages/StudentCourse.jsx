@@ -1,4 +1,4 @@
-import { useState, useEffect, useContext } from "react";
+import { useState, useEffect, useContext, useCallback } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { UserContext } from "../context/ContextProvider";
 import { ArrowLeft, Users, BookOpen, ClipboardList, Upload, CheckCircle, Clock, AlertCircle,Menu,X,Calendar,User,
@@ -39,51 +39,45 @@ export default function StudentCourse() {
     const [showPdfViewer, setShowPdfViewer] = useState(false);
     const [selectedPdfUrl, setSelectedPdfUrl] = useState('');
 
+    const fetchCourse = useCallback(async () => {
+      const res = await axios.get(`${import.meta.env.VITE_BACKEND_URL}/course/getStudent/${courseId}`);
+      setCourseData(res.data);
+      setFaculty(res.data.faculty);
+      setTas(res.data.tas || []);
+      setStudents(res.data.students || []);
+
+      const [assignmentRes, submissionRes] = await Promise.all([
+        axios.get(`${import.meta.env.VITE_BACKEND_URL}/course/getAssignments/${courseId}`),
+        axios.get(`${import.meta.env.VITE_BACKEND_URL}/student/${user.id}/course/${courseId}/submissions`)
+      ]);
+      const submittedAssignments = submissionRes.data.submittedAssignments || [];
+      setSubmissions(submissionRes.data.submissions || []);
+      setAssignments((assignmentRes.data.assignments || []).map(assignment => ({
+        ...assignment,
+        status: submittedAssignments.includes(assignment._id)
+          ? 'submitted'
+          : isOverdue(assignment.dueDate) ? 'overdue' : 'pending'
+      })));
+    }, [courseId, user?.id]);
+
 
     useEffect(() => {
         if(loading) return;
         const fetchCourses = async() => {
              try {
-              const res = await axios.get(`${import.meta.env.VITE_BACKEND_URL}/course/getStudent/${courseId}`)
-              const resStudents = res.data.students
-              
-              if(!(resStudents.some(student=>student._id.toString() === user.id.toString()))) {
-                  navigate('/unauthorized')
-                  return
-              }
-
-              setCourseData(res.data)
-              setFaculty(res.data.faculty)
-              setTas(res.data.tas)
-              setStudents(res.data.students)
-
-              const assignmentRes = await axios.get(`${import.meta.env.VITE_BACKEND_URL}/course/getAssignments/${courseId}`)
-              const assignments = assignmentRes.data.assignments
-
-              const submissionRes = await axios.get(`${import.meta.env.VITE_BACKEND_URL}/student/${user.id}/course/${courseId}/submissions`)
-              setSubmissions(submissionRes.data.submissions)
-
-              const submittedAssignments = submissionRes.data.submittedAssignments;
-
-              const updatedAssignments = assignments.map(assignment =>({
-                ...assignment,
-                status: submittedAssignments.includes(assignment._id) ? 'submitted' : 'pending'
-              }))
-
-              setAssignments(updatedAssignments)
-
-
+              await fetchCourse();
           }
           catch(err) {
-              toast.error("Error fetching course: ", err);
-              navigate('/unauthorized')
-              return;
+              const status = err.response?.status;
+              if (status === 401) navigate('/login', { replace: true });
+              else if (status === 403) navigate('/unauthorized', { replace: true });
+              else toast.error(err.response?.data?.error || "Unable to load this course");
           }
         }
 
         if(user) fetchCourses()
 
-    }, [loading, user, courseId])
+    }, [fetchCourse, loading, navigate, user])
 
 
     const pendingAssignments = assignments.filter(a => a.status === 'pending' || a.status === 'overdue');
@@ -181,22 +175,21 @@ export default function StudentCourse() {
           let pdfUrl = '', publicId = '';
 
           try {
-              const cloudinaryRes = await axios.post(
-                `https://api.cloudinary.com/v1_1/${import.meta.env.VITE_CLOUDINARY_CLOUD_NAME}/auto/upload`,
-                formData
-              );
-              pdfUrl = cloudinaryRes.data.secure_url;
-              publicId = cloudinaryRes.data.public_id;
+              const uploadRes = await axios.post(`${import.meta.env.VITE_BACKEND_URL}/upload/file`, formData, {
+                headers: { 'Content-Type': 'multipart/form-data' }
+              });
+              pdfUrl = uploadRes.data.secure_url;
+              publicId = uploadRes.data.public_id;
               console.log("Pdf uploaded successfully")
 
           } catch (err) {
-              toast.error(err+ ' Failed to upload PDF to Cloudinary');
+              toast.error(err.response?.data?.error || 'Failed to upload PDF');
               setUploading(false);
               return;
           }
 
           try {
-            const submissionRes = await axios.post(`${import.meta.env.VITE_BACKEND_URL}/submission/submitSolution`, {
+            await axios.post(`${import.meta.env.VITE_BACKEND_URL}/submission/submitSolution`, {
               filename: submissionForm.file.name,
               url: pdfUrl,
               publicId: publicId,
@@ -207,14 +200,15 @@ export default function StudentCourse() {
             setSubmissionForm({ file: null });
             setSelectedAssignment(null);
             setShowSubmissionModal(false);
-            
-            setUploading(false)
+            await fetchCourse();
             toast.success("Submission successful!");
           }
           catch(err) {
             console.error("Error submitting solution: ", err);
-            toast.error("Failed to submit solution. Please try again.");
-            return;
+            toast.error(err.response?.data?.error || "Failed to submit solution. Please try again.");
+          }
+          finally {
+            setUploading(false)
           }
         }
       };

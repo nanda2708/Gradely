@@ -84,20 +84,19 @@ taRouter.get("/getCourses/:taId", requireRole("ta"), async (req, res) => {
             return res.status(403).json({ error: "You can only access your own courses" });
         }
 
-        const ta = await TA.findById(taId).populate({
-            path: "courses",
-            populate: [
+        const ta = await TA.findById(taId);
+        if (!ta) return res.status(404).json({ error: "TA not found" });
+        const courses = await Course.find({
+            $or: [{ _id: { $in: ta.courses } }, { tas: ta._id }]
+        }).populate([
                 { path: "faculty", select: "name email" },
                 {
                     path: "assignments",
                     select: "title course dueDate submissions marks url",
                     populate: { path: "course", select: "name students" }
                 }
-            ]
-        });
-
-        if (!ta) return res.status(404).json({ error: "TA not found" });
-        return res.status(200).json({ courses: ta.courses });
+            ]);
+        return res.status(200).json({ courses });
     } catch (err) {
         console.error("Error getting TA courses:", err);
         return res.status(500).json({ error: "Internal server error" });

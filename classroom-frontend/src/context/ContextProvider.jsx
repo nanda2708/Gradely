@@ -2,6 +2,7 @@ import { createContext, useState, useEffect, useCallback } from "react";
 import { onAuthStateChanged, signOut } from "firebase/auth";
 import { auth } from "../firebase/firebaseConfig";
 
+// eslint-disable-next-line react-refresh/only-export-components
 export const UserContext = createContext();
 
 const backendUrl = import.meta.env.VITE_BACKEND_URL?.replace(/\/$/, "");

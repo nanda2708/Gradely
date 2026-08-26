@@ -75,17 +75,16 @@ studentRouter.get("/getCourses/:studentId", requireRole("student"), async (req, 
             return res.status(403).json({ error: "You can only access your own courses" });
         }
 
-        const student = await Student.findById(studentId).populate({
-            path: "courses",
-            populate: [
+        const student = await Student.findById(studentId).lean();
+        if (!student) return res.status(404).json({ error: "Student not found" });
+        const courses = await Course.find({
+            $or: [{ _id: { $in: student.courses } }, { students: student._id }]
+        }).populate([
                 { path: "faculty", select: "name email" },
                 { path: "assignments" }
-            ]
-        }).lean();
+            ]).lean();
 
-        if (!student) return res.status(404).json({ error: "Student not found" });
-
-        const allAssignments = student.courses.flatMap(course => course.assignments || []);
+        const allAssignments = courses.flatMap(course => course.assignments || []);
         const assignmentIds = allAssignments.map(assignment => assignment._id);
 
         const submissions = await Solution.find({
@@ -101,7 +100,7 @@ studentRouter.get("/getCourses/:studentId", requireRole("student"), async (req, 
 
         const now = new Date();
 
-        student.courses.forEach(course => {
+        courses.forEach(course => {
             course.assignments = (course.assignments || []).map(assignment => {
                 const idStr = assignment._id.toString();
                 const latestSubmission = submissionMap.get(idStr);
@@ -119,7 +118,7 @@ studentRouter.get("/getCourses/:studentId", requireRole("student"), async (req, 
             });
         });
 
-        return res.status(200).json({ courses: student.courses });
+        return res.status(200).json({ courses });
     } catch (err) {
         console.error("Error getting student courses:", err);
         return res.status(500).json({ error: "Internal server error" });
@@ -133,7 +132,9 @@ studentRouter.get("/:studentId/course/:courseId/submissions", requireRole("stude
             return res.status(403).json({ error: "You can only access your own submissions" });
         }
 
-        const isEnrolled = req.mongoUser.courses.some(id => id.toString() === courseId.toString());
+        const course = await Course.findById(courseId).select("students");
+        const isEnrolled = req.mongoUser.courses.some(id => id.toString() === courseId.toString()) ||
+            course?.students.some(id => id.toString() === studentId);
         if (!isEnrolled) return res.status(403).json({ error: "You are not enrolled in this course" });
 
         const assignments = await Assignment.find({ course: courseId }).select("_id");

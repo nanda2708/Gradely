@@ -1,6 +1,6 @@
 import { BrowserRouter as Router, Routes, Route, useNavigate } from "react-router-dom";
 import { useContext } from "react";
-import { Sparkles } from "lucide-react";
+import { Sparkles, CreditCard } from "lucide-react";
 import "./App.css";
 import ProtectedRoute from "./context/ProtectedRoutes";
 import { UserContext } from "./context/ContextProvider";
@@ -36,6 +36,25 @@ const StudentAIButton = () => {
     );
 };
 
+const PaymentButton = () => {
+    const { user } = useContext(UserContext);
+    const navigate = useNavigate();
+
+    if (!user) return null;
+
+    return (
+        <button
+            type="button"
+            onClick={() => navigate("/premium")}
+            className="fixed bottom-6 left-6 z-50 flex items-center gap-2 rounded-full bg-green-600 px-5 py-3 text-white shadow-lg hover:bg-green-700 transition-colors"
+            title="Upgrade to Gradely Premium"
+        >
+            <CreditCard className="h-5 w-5" />
+            Premium
+        </button>
+    );
+};
+
 const App = () => (
     <Router>
         <Routes>
@@ -50,11 +69,13 @@ const App = () => (
             <Route path="/student/courses/:courseId" element={<ProtectedRoute roles={["student"]}><StudentCourse /></ProtectedRoute>} />
             <Route path="/checkSubmission/:assignmentId/:submissionId" element={<ProtectedRoute roles={["faculty", "ta"]}><CheckSolution /></ProtectedRoute>} />
             <Route path="/payment-test" element={<ProtectedRoute roles={["faculty", "ta", "student"]}><PaymentTest /></ProtectedRoute>} />
+            <Route path="/premium" element={<ProtectedRoute roles={["faculty", "ta", "student"]}><PaymentTest /></ProtectedRoute>} />
             <Route path="/student/ai-helper" element={<ProtectedRoute roles={["student"]}><AIHelper /></ProtectedRoute>} />
             <Route path="/unauthorized" element={<Unauthorized />} />
             <Route path="*" element={<Unauthorized />} />
         </Routes>
         <StudentAIButton />
+        <PaymentButton />
     </Router>
 );
 

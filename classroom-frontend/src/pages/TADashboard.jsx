@@ -38,7 +38,7 @@ export default function TADashboard() {
         }
 
         if(user) fetchCourses()
-    }, [user.id])
+    }, [loading, user])
 
     // const checkedSolutions = [
     //     { 

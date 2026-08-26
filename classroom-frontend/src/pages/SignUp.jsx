@@ -20,12 +20,22 @@ const createMongoUser = async (role, email, name, phoneNumber = "", emailVerifie
     const endpoint = { faculty: "/faculty/createFaculty", ta: "/ta/createTA", student: "/student/createStudent" }[role];
     if (!endpoint) throw new Error("Please select a valid role");
 
+    const currentUser = auth.currentUser;
+    if (!currentUser) {
+        throw new Error("Your Firebase session expired. Please start signup again.");
+    }
+
+    const token = await currentUser.getIdToken();
     const response = await axios.post(`${import.meta.env.VITE_BACKEND_URL}${endpoint}`, {
         email: email.toLowerCase().trim(),
         name: name.trim(),
         phoneNumber: phoneNumber.trim() || undefined,
         emailVerified,
         phoneVerified
+    }, {
+        headers: {
+            Authorization: `Bearer ${token}`
+        }
     });
 
     if (response.status < 200 || response.status >= 300 || response.data?.error) {

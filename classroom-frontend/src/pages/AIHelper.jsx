@@ -53,7 +53,7 @@ export default function AIHelper() {
         setLoading(true);
 
         try {
-            const response = await axios.post(`${import.meta.env.VITE_BACKEND_URL}/ai/helper`, {
+            const response = await axios.post(`${import.meta.env.VITE_BACKEND_URL}/student/ai-helper/helper`, {
                 assignmentId,
                 message: cleanQuestion,
                 history: previousMessages

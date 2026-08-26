@@ -44,15 +44,14 @@ paymentRouter.post("/create-order", requireRole("student", "faculty", "ta"), asy
                     purpose: purpose.trim(),
                     user_id: req.mongoUser._id.toString(),
                     environment: process.env.RAZORPAY_ENVIRONMENT || "test"
-                },
-                capture: "automatic"
+                }
             })
         });
 
         const data = await razorpayResponse.json();
         if (!razorpayResponse.ok) {
             console.error("Razorpay order creation failed:", data);
-            return res.status(502).json({ error: "Unable to create Razorpay order" });
+            return res.status(502).json({ error: data?.error?.description || "Unable to create Razorpay order" });
         }
 
         const payment = await Payment.create({

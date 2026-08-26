@@ -1,6 +1,6 @@
 import { useNavigate } from "react-router-dom";
 import { UserContext } from "../context/ContextProvider";
-import { useContext, useEffect, useState } from "react";
+import { useCallback, useContext, useEffect, useState } from "react";
 import { BookOpen, Users, LogOut, Calendar, ClipboardList, Plus, X, Loader2 } from "lucide-react";
 import axios from "axios";
 import toast, { Toaster } from "react-hot-toast";
@@ -18,7 +18,7 @@ export default function FacultyDashboard() {
     const [assignments, setAssignments] = useState([]);
     const [activeTab, setActiveTab] = useState("courses");
 
-    const fetchDashboard = async () => {
+    const fetchDashboard = useCallback(async () => {
         if (!user?.id || !API) return;
         setLoadingData(true);
         try {
@@ -34,11 +34,11 @@ export default function FacultyDashboard() {
         } finally {
             setLoadingData(false);
         }
-    };
+    }, [user?.id]);
 
     useEffect(() => {
         if (!loading && user) fetchDashboard();
-    }, [loading, user?.id]);
+    }, [fetchDashboard, loading, user]);
 
     const handleLogout = async () => {
         await logout();
@@ -57,11 +57,7 @@ export default function FacultyDashboard() {
             const courseId = courseRes.data?._id;
             if (!courseId) throw new Error("Backend did not return the new course ID");
 
-            await axios.post(`${API}/faculty/addCourse`, {
-                facultyId: user.id,
-                courseId
-            });
-
+            setCourses(previous => [...previous, courseRes.data]);
             setCourseName("");
             setShowCreateModal(false);
             toast.success("Course created successfully!");

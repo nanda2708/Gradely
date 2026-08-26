@@ -75,15 +75,16 @@ export default function TACourse() {
 
           }
           catch(err) {
-              toast.error("Error fetching course: ", err);
-              navigate('/unauthorized')
-              return;
+              const status = err.response?.status;
+              if (status === 401) navigate('/login', { replace: true });
+              else if (status === 403) navigate('/unauthorized', { replace: true });
+              else toast.error(err.response?.data?.error || "Unable to load this course");
           }
         }
 
         if(user) fetchCourses()
 
-    }, [loading, user, courseId])
+    }, [loading, navigate, user, courseId])
 
   const reEvaluationRequests = [
     {

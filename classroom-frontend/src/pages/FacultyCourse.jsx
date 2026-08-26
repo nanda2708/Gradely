@@ -1,5 +1,5 @@
 import axios from "axios";
-import { useContext, useEffect, useState } from "react";
+import { useCallback, useContext, useEffect, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { UserContext } from "../context/ContextProvider";
 import { ArrowLeft, Users, BookOpen, ClipboardList, Upload, Plus, X, Calendar, CheckCircle,Clock, Menu, 
@@ -38,6 +38,29 @@ export default function FacultyCourse() {
     const [gradedSubmissions, setGradedSubmissions] = useState([]);
     const [ungradedSubmissions, setUngradedSubmissions] = useState([]);
 
+    const fetchCourse = useCallback(async () => {
+      const res = await axios.get(`${import.meta.env.VITE_BACKEND_URL}/course/getFaculty/${courseId}`);
+      setCourseData(res.data);
+      setTas(res.data.tas || []);
+      setStudents(res.data.students || []);
+
+      const assignmentRes = await axios.get(`${import.meta.env.VITE_BACKEND_URL}/course/getAssignments/${courseId}`);
+      const nextAssignments = assignmentRes.data.assignments || [];
+      setAssignments(nextAssignments);
+      const attachAssignment = assignment => sub => ({
+        ...sub,
+        assignmentName: assignment.title,
+        assignmentDueDate: assignment.dueDate,
+        maxMarks: assignment.marks
+      });
+      setGradedSubmissions(nextAssignments.flatMap(assignment =>
+        (assignment.gradedSubmissions || []).map(attachAssignment(assignment))
+      ));
+      setUngradedSubmissions(nextAssignments.flatMap(assignment =>
+        (assignment.ungradedSubmissions || []).map(attachAssignment(assignment))
+      ));
+    }, [courseId]);
+
   function PdfViewer({ pdfUrl }) {
     return (
       <iframe
@@ -59,22 +82,21 @@ export default function FacultyCourse() {
             setUploading(true);
             let pdfUrl = '', publicId = '';
 
-            if(assignmentForm.pdfFile) {
+            if (assignmentForm.pdfFile) {
               const formData = new FormData();
                 formData.append('file', assignmentForm.pdfFile);
                 formData.append('upload_preset', 'gradely-assignments');
 
                 try {
-                    const cloudinaryRes = await axios.post(
-                      `https://api.cloudinary.com/v1_1/${import.meta.env.VITE_CLOUDINARY_CLOUD_NAME}/auto/upload`,
-                      formData
-                    );
-                    pdfUrl = cloudinaryRes.data.secure_url;
-                    publicId = cloudinaryRes.data.public_id;
+                    const uploadRes = await axios.post(`${import.meta.env.VITE_BACKEND_URL}/upload/file`, formData, {
+                      headers: { 'Content-Type': 'multipart/form-data' }
+                    });
+                    pdfUrl = uploadRes.data.secure_url;
+                    publicId = uploadRes.data.public_id;
                     console.log("Pdf uploaded successfully")
 
                 } catch (err) {
-                    toast.error('Failed to upload PDF to Cloudinary');
+                    toast.error(err.response?.data?.error || 'Failed to upload PDF');
                     setUploading(false);
                     return;
                 }
@@ -103,6 +125,7 @@ export default function FacultyCourse() {
                 }
 
                 toast.success('Assignment created successfully!');
+                await fetchCourse();
                 setAssignmentForm({ name: '', description: '', dueDate: '', maxPoints: '', pdfFile: null });
                 setShowCreateModal(false);
             } catch (err) {
@@ -154,11 +177,6 @@ export default function FacultyCourse() {
                 return;
               }
 
-              await axios.post(`${import.meta.env.VITE_BACKEND_URL}/ta/addCourse`, {
-                courseId: courseId,
-                taId: taId
-              })
-
               toast.success("Added TA successfully to the course!")
             } else {
               res = await axios.get(`${import.meta.env.VITE_BACKEND_URL}/student/getStudentID`,{
@@ -180,13 +198,9 @@ export default function FacultyCourse() {
                 return;
               }
 
-              await axios.post(`${import.meta.env.VITE_BACKEND_URL}/student/addCourse`, {
-                courseId: courseId,
-                studentId: studentId
-              })
-
               toast.success("Added student successfully to the course!")
             }
+            await fetchCourse();
           }
           catch(err) {
             toast.error(err.response?.data?.error || "Unable to add participant");
@@ -236,41 +250,9 @@ export default function FacultyCourse() {
 
     useEffect(() => {
       if(loading) return;
-      const fetchCourse = async () => {
+      const loadCourse = async () => {
           try {
-              const res = await axios.get(`${import.meta.env.VITE_BACKEND_URL}/course/getFaculty/${courseId}`)
-
-              if(res.data.faculty._id != user.id) {
-                  navigate('/unauthorized')
-                  return
-              }
-              setCourseData(res.data)
-              setTas(res.data.tas)
-              setStudents(res.data.students)
-
-              const assignmentRes = await axios.get(`${import.meta.env.VITE_BACKEND_URL}/course/getAssignments/${courseId}`);
-              setAssignments(assignmentRes.data.assignments)
-
-              const gradedSubmissions = assignmentRes.data.assignments.flatMap(assignment =>
-                assignment.gradedSubmissions.map(sub => ({
-                  ...sub,
-                  assignmentName: assignment.title,
-                  assignmentDueDate: assignment.dueDate,
-                  maxMarks: assignment.marks
-                }))
-              );
-
-              const ungradedSubmissions = assignmentRes.data.assignments.flatMap(assignment =>
-                assignment.ungradedSubmissions.map(sub => ({
-                  ...sub,
-                  assignmentName: assignment.title,
-                  assignmentDueDate: assignment.dueDate,
-                  maxMarks: assignment.marks
-                }))
-              );
-
-              setGradedSubmissions(gradedSubmissions)
-              setUngradedSubmissions(ungradedSubmissions)
+              await fetchCourse();
 
           }
           catch(err) {
@@ -287,9 +269,9 @@ export default function FacultyCourse() {
           }
         }
 
-        if(user) fetchCourse()
+        if(user) loadCourse()
 
-    }, [loading, user, courseId])
+    }, [fetchCourse, loading, navigate, user])
 
     return (
       <div className="min-h-screen bg-gray-50">

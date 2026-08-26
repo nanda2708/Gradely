@@ -54,23 +54,34 @@ uploadRouter.post("/file", requireRole("faculty", "ta", "student"), upload.singl
 
         const signature = createSignature({ folder, timestamp }, apiSecret);
         const form = new FormData();
-        const data = `data:${req.file.mimetype};base64,${req.file.buffer.toString("base64")}`;
+        const fileBlob = new Blob([req.file.buffer], { type: req.file.mimetype });
+        // Upload PDFs as "image" so Cloudinary allows inline delivery/viewing.
+        // "raw" PDF delivery is blocked (401) unless enabled in Cloudinary security settings.
+        const resourceType = "auto";
 
-        form.append("file", data);
+        form.append("file", fileBlob, req.file.originalname || "upload");
         form.append("api_key", apiKey);
         form.append("timestamp", String(timestamp));
         form.append("folder", folder);
+        form.append("resource_type", resourceType);
         form.append("signature", signature);
 
-        const response = await fetch(`https://api.cloudinary.com/v1_1/${encodeURIComponent(cloudName)}/auto/upload`, {
+        const response = await fetch(`https://api.cloudinary.com/v1_1/${encodeURIComponent(cloudName)}/${resourceType}/upload`, {
             method: "POST",
             body: form
         });
 
-        const result = await response.json().catch(() => null);
+        const rawText = await response.text();
+        let result = null;
+
+        try {
+            result = rawText ? JSON.parse(rawText) : null;
+        } catch (err) {
+            console.error("Cloudinary response was not valid JSON:", rawText);
+        }
 
         if (!response.ok) {
-            console.error("Cloudinary upload failed:", result);
+            console.error("Cloudinary upload failed:", rawText);
             return res.status(502).json({
                 error: result?.error?.message || "Cloudinary rejected the file upload"
             });

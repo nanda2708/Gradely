@@ -17,7 +17,8 @@ aiRouter.post("/helper", requireRole("student"), async (req, res) => {
         if (cleanMessage.length > MAX_MESSAGE_LENGTH) {
             return res.status(400).json({ error: `Question must be ${MAX_MESSAGE_LENGTH} characters or fewer` });
         }
-        if (!process.env.GEMINI_API_KEY) {
+        const apiKey = process.env.GEMINI_API_KEY || process.env.GOOGLE_GEMINI_API_KEY || process.env.GOOGLE_API_KEY;
+        if (!apiKey) {
             return res.status(503).json({ error: "AI helper is not configured on the server" });
         }
         if (!assignmentId) return res.status(400).json({ error: "Assignment ID is required" });
@@ -26,11 +27,11 @@ aiRouter.post("/helper", requireRole("student"), async (req, res) => {
         const assignment = await Assignment.findById(assignmentId).lean();
         if (!student || !assignment) return res.status(404).json({ error: "Assignment not found" });
 
-        const isEnrolled = student.courses.some(id => id.toString() === assignment.course.toString());
-        if (!isEnrolled) return res.status(403).json({ error: "You are not enrolled in this assignment's course" });
-
-        const course = await Course.findById(assignment.course).select("name").lean();
+        const course = await Course.findById(assignment.course).select("name students").lean();
         if (!course) return res.status(404).json({ error: "Course not found" });
+        const isEnrolled = student.courses.some(id => id.toString() === assignment.course.toString()) ||
+            course.students.some(id => id.toString() === student._id.toString());
+        if (!isEnrolled) return res.status(403).json({ error: "You are not enrolled in this assignment's course" });
 
         const safeHistory = Array.isArray(history)
             ? history.slice(-MAX_HISTORY_ITEMS).filter(item =>
@@ -52,26 +53,36 @@ aiRouter.post("/helper", requireRole("student"), async (req, res) => {
 
         const systemPrompt = `You are Gradely AI Helper, an educational assistant for students.\nCourse: ${course.name}\nAssignment: ${assignment.title}\nAssignment description: ${assignment.description || "No description provided."}\nMaximum marks: ${assignment.marks ?? "Not specified"}\n\nHelp the student understand concepts, clarify doubts, explain approaches, and guide them step-by-step. Do not pretend to know information that is not present. If the question is unrelated to the assignment, politely say you are focused on academic help. Do not provide deceptive ways to bypass academic rules or impersonate the student's work. Prefer explanations and hints over ready-to-submit answers.`;
 
-        const model = process.env.GEMINI_MODEL || "gemini-2.5-flash";
-        const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent?key=${encodeURIComponent(process.env.GEMINI_API_KEY)}`;
-
-        const geminiResponse = await fetch(endpoint, {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
+        const requestBody = JSON.stringify({
                 systemInstruction: { parts: [{ text: systemPrompt }] },
                 contents,
                 generationConfig: {
                     temperature: 0.4,
                     maxOutputTokens: 1200
                 }
-            })
-        });
+            });
+        const requestedModel = process.env.GEMINI_MODEL || "gemini-3.6-flash";
+        const candidateModels = [...new Set([requestedModel, "gemini-3.6-flash", "gemini-flash-latest"])];
+        let model = candidateModels[0];
+        let geminiResponse;
+        let data;
 
-        const data = await geminiResponse.json();
+        for (const candidate of candidateModels) {
+            model = candidate;
+            const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(candidate)}:generateContent?key=${encodeURIComponent(apiKey)}`;
+            geminiResponse = await fetch(endpoint, {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: requestBody
+            });
+            data = await geminiResponse.json().catch(() => ({}));
+            if (geminiResponse.ok || geminiResponse.status !== 404) break;
+        }
+
         if (!geminiResponse.ok) {
             console.error("Gemini API error:", data);
-            return res.status(502).json({ error: "The AI helper could not answer right now" });
+            const upstreamMessage = data?.error?.message;
+            return res.status(502).json({ error: upstreamMessage || "The AI helper could not answer right now" });
         }
 
         const answer = data?.candidates?.[0]?.content?.parts?.map(part => part.text || "").join("").trim();

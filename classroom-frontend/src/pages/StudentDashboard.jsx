@@ -1,7 +1,7 @@
 import { useContext, useEffect, useState } from "react";
 import { UserContext } from "../context/ContextProvider";
 import { useNavigate } from "react-router-dom";
-import { BookOpen, Users, LogOut, Calendar, ClipboardList, Upload, CheckCircle, Clock, AlertCircle} from "lucide-react";
+import { BookOpen, Users, LogOut, Calendar, ClipboardList, Upload} from "lucide-react";
 import axios from "axios";
 import toast, { Toaster } from "react-hot-toast";
 
@@ -53,41 +53,11 @@ export default function StudentDashboard() {
         logout()
     };
 
-    const getStatusIcon = (status) => {
-        switch (status) {
-        case 'pending':
-            return <Clock className="h-5 w-5 text-yellow-500" />;
-        case 'submitted':
-            return <CheckCircle className="h-5 w-5 text-green-500" />;
-        case 'overdue':
-            return <AlertCircle className="h-5 w-5 text-red-500" />;
-        default:
-            return null;
-        }
-    };
-
-    const getStatusColor = (status) => {
-        switch (status) {
-        case 'pending':
-            return 'text-yellow-600 bg-yellow-100';
-        case 'submitted':
-            return 'text-green-600 bg-green-100';
-        case 'overdue':
-            return 'text-red-600 bg-red-100';
-        default:
-            return 'text-gray-600 bg-gray-100';
-        }
-    };
-
     const getGradeColor = (grade) => {
         if (grade.startsWith('A')) return 'text-green-600 bg-green-100';
         if (grade.startsWith('B')) return 'text-blue-600 bg-blue-100';
         if (grade.startsWith('C')) return 'text-yellow-600 bg-yellow-100';
         return 'text-red-600 bg-red-100';
-    };
-
-    const isOverdue = (dueDate) => {
-        return new Date(dueDate) < new Date();
     };
 
     const getStatus = (status) => {

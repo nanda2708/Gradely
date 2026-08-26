@@ -1,13 +1,23 @@
 import { Router } from "express";
+import mongoose from "mongoose";
 import Course from "../models/courses.js";
+import Faculty from "../models/faculty.js";
+import Student from "../models/student.js";
+import TA from "../models/ta.js";
 import { requireRole } from "../middleware/roleMiddleware.js";
 
 const courseRouter = Router();
 
 const idEquals = (a, b) => a?.toString() === b?.toString();
 const arrayIncludesId = (array = [], id) => array.some(item => idEquals(item, id));
+const hasCourseMembership = (course, user, role) => {
+    if (role === "faculty") return idEquals(course.faculty?._id || course.faculty, user._id);
+    const members = role === "ta" ? course.tas : course.students;
+    return arrayIncludesId(members, user._id) || arrayIncludesId(user.courses, course._id);
+};
 
 courseRouter.post("/createCourse", requireRole("faculty"), async (req, res) => {
+    const session = await mongoose.startSession();
     try {
         const { name, faculty } = req.body;
         if (!name?.trim() || !faculty) {
@@ -17,11 +27,22 @@ courseRouter.post("/createCourse", requireRole("faculty"), async (req, res) => {
             return res.status(403).json({ error: "You can only create courses for yourself" });
         }
 
-        const course = await Course.create({ name: name.trim(), faculty });
+        session.startTransaction();
+        const course = new Course({ name: name.trim(), faculty });
+        await course.save({ session });
+        await Faculty.findByIdAndUpdate(
+            req.mongoUser._id,
+            { $addToSet: { courses: course._id } },
+            { session }
+        );
+        await session.commitTransaction();
         return res.status(201).json(course);
     } catch (err) {
+        if (session.inTransaction()) await session.abortTransaction();
         console.error("Error creating course in DB:", err);
         return res.status(500).json({ error: "Internal Server Error" });
+    } finally {
+        await session.endSession();
     }
 });
 
@@ -43,7 +64,7 @@ courseRouter.get("/getTA/:courseId", requireRole("ta"), async (req, res) => {
     try {
         const course = await Course.findById(req.params.courseId).populate("faculty").populate("tas").populate("students");
         if (!course) return res.status(404).json({ error: "Course not found" });
-        if (!arrayIncludesId(course.tas, req.mongoUser._id)) {
+        if (!hasCourseMembership(course, req.mongoUser, "ta")) {
             return res.status(403).json({ error: "You are not assigned to this course" });
         }
         return res.status(200).json(course);
@@ -57,7 +78,7 @@ courseRouter.get("/getStudent/:courseId", requireRole("student"), async (req, re
     try {
         const course = await Course.findById(req.params.courseId).populate("faculty").populate("tas").populate("students");
         if (!course) return res.status(404).json({ error: "Course not found" });
-        if (!arrayIncludesId(course.students, req.mongoUser._id)) {
+        if (!hasCourseMembership(course, req.mongoUser, "student")) {
             return res.status(403).json({ error: "You are not enrolled in this course" });
         }
         return res.status(200).json(course);
@@ -69,38 +90,73 @@ courseRouter.get("/getStudent/:courseId", requireRole("student"), async (req, re
 
 courseRouter.post("/addTA", requireRole("faculty"), async (req, res) => {
     const { courseId, taId } = req.body;
+    const session = await mongoose.startSession();
     try {
         if (!courseId || !taId) return res.status(400).json({ error: "Course ID and TA ID are required!" });
-        const course = await Course.findById(courseId);
-        if (!course) return res.status(404).json({ error: "Course not found" });
-        if (!idEquals(course.faculty, req.mongoUser._id)) return res.status(403).json({ error: "You do not own this course" });
-        if (arrayIncludesId(course.tas, taId)) return res.status(409).json({ error: "This TA has already been assigned!" });
+        session.startTransaction();
+        const course = await Course.findById(courseId).session(session);
+        if (!course) {
+            await session.abortTransaction();
+            return res.status(404).json({ error: "Course not found" });
+        }
+        if (!idEquals(course.faculty, req.mongoUser._id)) {
+            await session.abortTransaction();
+            return res.status(403).json({ error: "You do not own this course" });
+        }
+        const ta = await TA.findById(taId).session(session);
+        if (!ta) {
+            await session.abortTransaction();
+            return res.status(404).json({ error: "TA not found" });
+        }
 
-        course.tas.push(taId);
-        await course.save();
-        return res.status(200).json({ message: "TA added to course successfully!", course });
+        const alreadyEnrolled = arrayIncludesId(course.tas, taId);
+        course.tas.addToSet(taId);
+        ta.courses.addToSet(courseId);
+        await Promise.all([course.save({ session }), ta.save({ session })]);
+        await session.commitTransaction();
+        return res.status(200).json({ message: alreadyEnrolled ? "TA was already enrolled" : "TA added to course successfully!", course, alreadyEnrolled });
     } catch (err) {
+        if (session.inTransaction()) await session.abortTransaction();
         console.error("Error adding TA:", err);
         return res.status(500).json({ error: "Internal Server Error" });
+    } finally {
+        await session.endSession();
     }
 });
 
 courseRouter.post("/addStudent", requireRole("faculty"), async (req, res) => {
     const { courseId, studentId } = req.body;
+    const session = await mongoose.startSession();
     try {
         if (!courseId || !studentId) return res.status(400).json({ error: "Course ID and Student ID both are required!" });
-        const course = await Course.findById(courseId);
-        if (!course) return res.status(404).json({ error: "Course not found" });
-        if (!idEquals(course.faculty, req.mongoUser._id)) return res.status(403).json({ error: "You do not own this course" });
-        if (arrayIncludesId(course.students, studentId)) return res.status(409).json({ error: "This student has already been added!" });
+        session.startTransaction();
+        const course = await Course.findById(courseId).session(session);
+        if (!course) {
+            await session.abortTransaction();
+            return res.status(404).json({ error: "Course not found" });
+        }
+        if (!idEquals(course.faculty, req.mongoUser._id)) {
+            await session.abortTransaction();
+            return res.status(403).json({ error: "You do not own this course" });
+        }
+        const student = await Student.findById(studentId).session(session);
+        if (!student) {
+            await session.abortTransaction();
+            return res.status(404).json({ error: "Student not found" });
+        }
 
-        course.students.push(studentId);
+        course.students.addToSet(studentId);
         course.noOfStudents = course.students.length;
-        await course.save();
+        student.courses.addToSet(courseId);
+        await Promise.all([course.save({ session }), student.save({ session })]);
+        await session.commitTransaction();
         return res.status(200).json({ message: "Student added to course successfully!", course });
     } catch (err) {
+        if (session.inTransaction()) await session.abortTransaction();
         console.error("Error adding student:", err);
         return res.status(500).json({ error: "Internal Server Error" });
+    } finally {
+        await session.endSession();
     }
 });
 
@@ -134,9 +190,9 @@ courseRouter.get("/getAssignments/:courseId", requireRole("faculty", "ta", "stud
         if (!course) return res.status(404).json({ error: "Course not found" });
 
         let hasAccess = false;
-        if (req.userRole === "faculty") hasAccess = idEquals(course.faculty, req.mongoUser._id);
-        if (req.userRole === "ta") hasAccess = arrayIncludesId(course.tas, req.mongoUser._id);
-        if (req.userRole === "student") hasAccess = arrayIncludesId(course.students, req.mongoUser._id);
+        if (req.userRole === "faculty") hasAccess = hasCourseMembership(course, req.mongoUser, "faculty");
+        if (req.userRole === "ta") hasAccess = hasCourseMembership(course, req.mongoUser, "ta");
+        if (req.userRole === "student") hasAccess = hasCourseMembership(course, req.mongoUser, "student");
         if (!hasAccess) return res.status(403).json({ error: "You do not have access to this course" });
 
         const processedAssignments = course.assignments.map(assignment => {

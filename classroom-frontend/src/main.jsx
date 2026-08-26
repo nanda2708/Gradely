@@ -6,11 +6,11 @@ import App from "./App.jsx";
 import { ContextProvider } from "./context/ContextProvider.jsx";
 import { auth } from "./firebase/firebaseConfig";
 
-const backendUrl = import.meta.env.VITE_BACKEND_URL?.replace(/\/$/, "");
+const backendUrl = (import.meta.env.VITE_BACKEND_URL || "http://localhost:5000").replace(/\/$/, "");
 
 axios.interceptors.request.use(async (config) => {
     // Keep legacy development URLs working after deployment.
-    if (backendUrl && typeof config.url === "string") {
+    if (typeof config.url === "string") {
         const legacyLocalhost = /^https?:\/\/localhost:5000(?=\/|$)/i;
         if (legacyLocalhost.test(config.url)) {
             config.url = config.url.replace(legacyLocalhost, backendUrl);
