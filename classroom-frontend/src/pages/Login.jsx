@@ -7,7 +7,6 @@ import { doc, getDoc } from "firebase/firestore";
 import { Mail, Lock, ArrowRight, Loader2 } from "lucide-react";
 import toast, { Toaster } from "react-hot-toast";
 import axios from "axios";
-import { UserContext } from "../context/ContextProvider";
 
 const backendUrl = import.meta.env.VITE_BACKEND_URL?.replace(/\/$/, "");
 
