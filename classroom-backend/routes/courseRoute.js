@@ -210,9 +210,27 @@ courseRouter.get("/getAssignments/:courseId", requireRole("faculty", "ta", "stud
                 };
             }
 
+            // A resubmission is another Solution document, but progress on an
+            // assignment should count each student only once. Keep the latest
+            // submission for each student for staff views, while preserving
+            // every submission in MongoDB for history/auditing.
+            const latestSubmissionByStudent = new Map();
+            const submissions = [...(assignment.submissions || [])].sort((a, b) => {
+                const dateA = new Date(a.submittedDate || a.createdAt || 0).getTime();
+                const dateB = new Date(b.submittedDate || b.createdAt || 0).getTime();
+                return dateB - dateA;
+            });
+
+            submissions.forEach(submission => {
+                const studentId = submission.student?._id?.toString() || submission.student?.toString();
+                if (studentId && !latestSubmissionByStudent.has(studentId)) {
+                    latestSubmissionByStudent.set(studentId, submission);
+                }
+            });
+
             const gradedSubmissions = [];
             const ungradedSubmissions = [];
-            assignment.submissions.forEach(submission => {
+            latestSubmissionByStudent.forEach(submission => {
                 if (submission.status === "graded") gradedSubmissions.push(submission);
                 else ungradedSubmissions.push(submission);
             });
