@@ -10,7 +10,7 @@ import {
     signOut
 } from "firebase/auth";
 import { auth, db, provider } from "../firebase/firebaseConfig";
-import { setDoc, doc, getDoc, deleteDoc } from "firebase/firestore";
+import { setDoc, doc, deleteDoc } from "firebase/firestore";
 import { Link, useNavigate } from "react-router-dom";
 import { ArrowRight, BookOpen, GraduationCap, Lock, Mail, MailCheck, Phone, School, User } from "lucide-react";
 import toast from "react-hot-toast";
@@ -52,6 +52,28 @@ const createMongoUser = async (role, email, name, phoneNumber = "") => {
     }
 };
 
+// The signup profile in Firestore lets the backend recover an account if the
+// Gradely record was never created. It is a backup, so a Firestore rules
+// rejection must not abort (or roll back) an otherwise successful signup.
+const saveProfile = async (email, profile, options) => {
+    try {
+        await setDoc(doc(db, "users", email), profile, options);
+    } catch (err) {
+        console.warn("Could not save Firestore signup profile:", err.code || err.message);
+    }
+};
+
+// True when this Firebase user already has a Gradely account.
+const hasGradelyAccount = async () => {
+    try {
+        await axios.get(`${API}/auth/me`);
+        return true;
+    } catch (err) {
+        if (err.response?.status === 404) return false;
+        throw err;
+    }
+};
+
 export default function SignUp() {
     const [email, setEmail] = useState("");
     const [password, setPassword] = useState("");
@@ -84,7 +106,7 @@ export default function SignUp() {
         const normalizedEmail = firebaseUser.email.toLowerCase().trim();
         try {
             await createMongoUser(role, normalizedEmail, name, phoneNumber);
-            await setDoc(doc(db, "users", normalizedEmail), {
+            await saveProfile(normalizedEmail, {
                 email: normalizedEmail,
                 name: name.trim(),
                 role,
@@ -110,7 +132,7 @@ export default function SignUp() {
             const normalizedEmail = email.toLowerCase().trim();
             const credential = await createUserWithEmailAndPassword(auth, normalizedEmail, password);
 
-            await setDoc(doc(db, "users", normalizedEmail), {
+            await saveProfile(normalizedEmail, {
                 email: normalizedEmail,
                 name: name.trim(),
                 role,
@@ -215,10 +237,7 @@ export default function SignUp() {
             const result = await signInWithPopup(auth, provider);
             firebaseUser = result.user;
             const normalizedEmail = firebaseUser.email.toLowerCase().trim();
-            const userRef = doc(db, "users", normalizedEmail);
-            const existingUser = await getDoc(userRef);
-
-            if (existingUser.exists()) {
+            if (await hasGradelyAccount()) {
                 await signOut(auth);
                 toast.error("An account with this email already exists. Try logging in!");
                 navigate("/login");
@@ -226,7 +245,7 @@ export default function SignUp() {
             }
 
             const displayName = firebaseUser.displayName?.trim() || "Gradely User";
-            await setDoc(userRef, {
+            await saveProfile(normalizedEmail, {
                 email: normalizedEmail,
                 name: displayName,
                 role,
@@ -237,7 +256,7 @@ export default function SignUp() {
             try {
                 await createMongoUser(role, normalizedEmail, displayName);
             } catch (err) {
-                await deleteDoc(userRef).catch(() => {});
+                await deleteDoc(doc(db, "users", normalizedEmail)).catch(() => {});
                 await deleteUser(firebaseUser).catch(() => signOut(auth));
                 throw err;
             }

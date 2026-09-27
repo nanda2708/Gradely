@@ -1,9 +1,8 @@
 import { useState, useContext } from "react";
 import { UserContext } from "../context/ContextProvider";
 import { signInWithEmailAndPassword, signInWithPopup, signOut, sendEmailVerification } from "firebase/auth";
-import { auth, provider, db } from "../firebase/firebaseConfig";
+import { auth, provider } from "../firebase/firebaseConfig";
 import { Link, useNavigate } from "react-router-dom";
-import { doc, getDoc } from "firebase/firestore";
 import { Mail, Lock, ArrowRight } from "lucide-react";
 import toast from "react-hot-toast";
 import axios from "axios";
@@ -22,8 +21,20 @@ const getMongoUser = async (firebaseUser) => {
         return response.data;
     } catch (err) {
         if (err.response?.status !== 404) throw err;
+    }
+
+    // No Gradely account yet: the backend recovers it from the signup profile
+    // (read server-side, so client Firestore rules don't apply).
+    try {
         const provisioned = await axios.post(`${backendUrl}/auth/provision`, {}, config);
         return provisioned.data;
+    } catch (err) {
+        if (err.response?.status === 404) {
+            const notRegistered = new Error("You are not registered in Gradely. Please sign up first.");
+            notRegistered.notRegistered = true;
+            throw notRegistered;
+        }
+        throw err;
     }
 };
 
@@ -37,7 +48,7 @@ export default function Login() {
     const [isGoogleLoading, setIsGoogleLoading] = useState(false);
     const navigate = useNavigate();
 
-    const finishLogin = async (firebaseUser, userData = {}) => {
+    const finishLogin = async (firebaseUser) => {
         await firebaseUser.reload();
         const freshUser = auth.currentUser;
         if (!freshUser) throw new Error("Firebase session ended unexpectedly");
@@ -52,18 +63,18 @@ export default function Login() {
         }
 
         const mongoUser = await getMongoUser(freshUser);
-        const role = mongoUser.role || userData.role;
+        const role = mongoUser.role;
         if (!role || !["faculty", "ta", "student"].includes(role)) {
             throw new Error("Your Gradely account does not have a valid role");
         }
 
         login({
-            name: mongoUser.name || userData.name || freshUser.displayName || "User",
+            name: mongoUser.name || freshUser.displayName || "User",
             email: mongoUser.email || freshUser.email,
             role,
             id: mongoUser.id,
             emailVerified: Boolean(freshUser.emailVerified || isGoogleAccount),
-            phoneVerified: Boolean(mongoUser.phoneVerified ?? userData.phoneVerified)
+            phoneVerified: Boolean(mongoUser.phoneVerified)
         });
 
         toast.success("Logged in successfully!");
@@ -75,19 +86,15 @@ export default function Login() {
         setIsLoading(true);
         try {
             const normalizedEmail = email.toLowerCase().trim();
-            const userDoc = await getDoc(doc(db, "users", normalizedEmail));
-            if (!userDoc.exists()) {
-                toast.error("You are not registered. Please sign up first.");
-                navigate("/signup");
-                return;
-            }
-
             const credential = await signInWithEmailAndPassword(auth, normalizedEmail, password);
-            await finishLogin(credential.user, userDoc.data());
+            await finishLogin(credential.user);
         } catch (err) {
             console.error("Login failed:", err);
             await signOut(auth).catch(() => {});
-            if (err.code === "auth/invalid-credential") toast.error("Invalid email or password. Please try again.");
+            if (err.notRegistered) {
+                toast.error(err.message);
+                navigate("/signup");
+            } else if (err.code === "auth/invalid-credential") toast.error("Invalid email or password. Please try again.");
             else if (err.code === "auth/too-many-requests") toast.error("Too many attempts. Please wait and try again.");
             else toast.error(err.response?.data?.error || err.message || "Something went wrong while logging in.");
         } finally {
@@ -99,23 +106,16 @@ export default function Login() {
         setIsGoogleLoading(true);
         try {
             const result = await signInWithPopup(auth, provider);
-            const firebaseUser = result.user;
-            const normalizedEmail = firebaseUser.email?.toLowerCase().trim();
-
-            if (!normalizedEmail) throw new Error("Google did not provide an email address");
-
-            const userDoc = await getDoc(doc(db, "users", normalizedEmail));
-            if (!userDoc.exists()) {
-                await signOut(auth);
+            if (!result.user.email) throw new Error("Google did not provide an email address");
+            await finishLogin(result.user);
+        } catch (err) {
+            console.error("Google login failed:", err);
+            await signOut(auth).catch(() => {});
+            if (err.notRegistered) {
                 toast.error("This Google account is not registered in Gradely. Please sign up first.");
                 navigate("/signup");
                 return;
             }
-
-            await finishLogin(firebaseUser, { ...userDoc.data(), provider: "google.com" });
-        } catch (err) {
-            console.error("Google login failed:", err);
-            await signOut(auth).catch(() => {});
             toast.error(err.response?.data?.error || err.message || "Unable to sign in with Google.");
         } finally {
             setIsGoogleLoading(false);
