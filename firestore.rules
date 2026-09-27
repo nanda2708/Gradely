@@ -1,0 +1,18 @@
+rules_version = '2';
+
+// Gradely stores a signup profile at users/{email}. Only the signed-in owner of
+// that email may read or write it. The backend reads it with the Admin SDK,
+// which bypasses these rules.
+service cloud.firestore {
+  match /databases/{database}/documents {
+    match /users/{email} {
+      allow read, write: if request.auth != null
+        && request.auth.token.email != null
+        && request.auth.token.email.lower() == email;
+    }
+
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}
