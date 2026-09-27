@@ -2,16 +2,19 @@ import { Router } from "express";
 import TA from "../models/ta.js";
 import Course from "../models/courses.js";
 import Solution from "../models/solutions.js";
-import { requireMatchingEmail, requireRole } from "../middleware/roleMiddleware.js";
+import { buildAccountPayload, requireMatchingEmail, requireRole } from "../middleware/roleMiddleware.js";
 
 const taRouter = Router();
 const idEquals = (a, b) => a?.toString() === b?.toString();
 
 taRouter.post("/createTA", requireMatchingEmail("body"), async (req, res) => {
     try {
-        const ta = await TA.create(req.body);
+        const ta = await TA.create(buildAccountPayload(req));
         return res.status(201).json(ta);
     } catch (err) {
+        if (err?.code === 11000) {
+            return res.status(409).json({ error: "An account with this email already exists" });
+        }
         console.error("Error creating TA in DB:", err);
         return res.status(500).json({ error: "Internal Server Error" });
     }
@@ -92,8 +95,11 @@ taRouter.get("/getCourses/:taId", requireRole("ta"), async (req, res) => {
                 { path: "faculty", select: "name email" },
                 {
                     path: "assignments",
-                    select: "title course dueDate submissions marks url",
-                    populate: { path: "course", select: "name students" }
+                    select: "title description course dueDate submissions marks url",
+                    populate: [
+                        { path: "course", select: "name students" },
+                        { path: "submissions", select: "student status" }
+                    ]
                 }
             ]);
         return res.status(200).json({ courses });

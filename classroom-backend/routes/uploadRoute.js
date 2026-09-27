@@ -30,7 +30,19 @@ const createSignature = (params, apiSecret) => {
         .digest("hex");
 };
 
-uploadRouter.post("/file", requireRole("faculty", "ta", "student"), upload.single("file"), async (req, res) => {
+// Run multer manually so size/type rejections reach the client as 4xx errors
+// instead of falling through to the generic 500 handler.
+const receiveFile = (req, res, next) => {
+    upload.single("file")(req, res, (err) => {
+        if (!err) return next();
+        if (err instanceof multer.MulterError && err.code === "LIMIT_FILE_SIZE") {
+            return res.status(413).json({ error: "File is too large. Maximum size is 15 MB." });
+        }
+        return res.status(400).json({ error: err.message || "Invalid file upload" });
+    });
+};
+
+uploadRouter.post("/file", requireRole("faculty", "ta", "student"), receiveFile, async (req, res) => {
     try {
         if (!req.file) {
             return res.status(400).json({ error: "No file was uploaded" });
@@ -55,7 +67,7 @@ uploadRouter.post("/file", requireRole("faculty", "ta", "student"), upload.singl
         const signature = createSignature({ folder, timestamp }, apiSecret);
         const form = new FormData();
         const fileBlob = new Blob([req.file.buffer], { type: req.file.mimetype });
-        // Upload PDFs as "image" so Cloudinary allows inline delivery/viewing.
+        // "auto" stores PDFs as images so Cloudinary allows inline viewing;
         // "raw" PDF delivery is blocked (401) unless enabled in Cloudinary security settings.
         const resourceType = "auto";
 
@@ -95,13 +107,7 @@ uploadRouter.post("/file", requireRole("faculty", "ta", "student"), upload.singl
         });
     } catch (err) {
         console.error("Upload route failed:", err);
-        if (err instanceof multer.MulterError) {
-            if (err.code === "LIMIT_FILE_SIZE") {
-                return res.status(413).json({ error: "File is too large. Maximum size is 15 MB." });
-            }
-            return res.status(400).json({ error: err.message });
-        }
-        return res.status(500).json({ error: err.message || "File upload failed" });
+        return res.status(500).json({ error: "File upload failed" });
     }
 });
 

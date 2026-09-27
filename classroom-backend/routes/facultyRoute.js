@@ -1,14 +1,17 @@
 import { Router } from "express";
 import Faculty from "../models/faculty.js";
-import { requireMatchingEmail, requireRole } from "../middleware/roleMiddleware.js";
+import { buildAccountPayload, requireMatchingEmail, requireRole } from "../middleware/roleMiddleware.js";
 
 const facultyRouter = Router();
 
 facultyRouter.post("/createFaculty", requireMatchingEmail("body"), async (req, res) => {
     try {
-        const faculty = await Faculty.create(req.body);
+        const faculty = await Faculty.create(buildAccountPayload(req));
         return res.status(201).json(faculty);
     } catch (err) {
+        if (err?.code === 11000) {
+            return res.status(409).json({ error: "An account with this email already exists" });
+        }
         console.error("Error creating faculty in DB:", err);
         return res.status(500).json({ error: "Internal Server Error" });
     }
@@ -72,7 +75,10 @@ facultyRouter.get("/getAssignments/:facultyId", requireRole("faculty"), async (r
 
         const faculty = await Faculty.findById(req.params.facultyId).populate({
             path: "assignments",
-            populate: { path: "course", select: "name students" }
+            populate: [
+                { path: "course", select: "name students" },
+                { path: "submissions", select: "student status" }
+            ]
         });
 
         if (!faculty) return res.status(404).json({ error: "Faculty not found" });

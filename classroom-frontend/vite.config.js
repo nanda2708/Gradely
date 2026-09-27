@@ -6,6 +6,16 @@ export default defineConfig({
   plugins: [react()],
   base: '/',
   build: {
-    outDir: 'dist', // build output directory
+    outDir: 'dist',
+    rollupOptions: {
+      output: {
+        // Keep large vendor libraries in their own long-cached chunks.
+        manualChunks: {
+          react: ['react', 'react-dom', 'react-router-dom'],
+          firebase: ['firebase/app', 'firebase/auth', 'firebase/firestore'],
+        },
+      },
+    },
+    chunkSizeWarningLimit: 600,
   },
 })

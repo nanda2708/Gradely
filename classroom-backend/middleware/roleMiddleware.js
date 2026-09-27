@@ -45,3 +45,19 @@ export const requireMatchingEmail = (source = "body") => (req, res, next) => {
 
     return next();
 };
+
+// Only accept profile fields a user may set for themselves when their Gradely
+// account is created. Verification flags come from the verified Firebase token,
+// never from the request body.
+export const buildAccountPayload = (req) => {
+    const name = typeof req.body?.name === "string" ? req.body.name.trim() : "";
+    const phoneNumber = typeof req.body?.phoneNumber === "string" ? req.body.phoneNumber.trim() : "";
+
+    return {
+        name: name || req.firebaseUser?.name || "Gradely User",
+        email: req.firebaseUser.email.toLowerCase().trim(),
+        phoneNumber,
+        emailVerified: Boolean(req.firebaseUser?.email_verified),
+        phoneVerified: Boolean(req.firebaseUser?.phone_number)
+    };
+};
