@@ -1,378 +1,192 @@
-import { useContext, useEffect, useState } from "react";
-import { UserContext } from "../context/ContextProvider";
+import { useContext, useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { BookOpen, Users, LogOut, Calendar, ClipboardList, Upload} from "lucide-react";
 import axios from "axios";
-import toast, { Toaster } from "react-hot-toast";
+import toast from "react-hot-toast";
+import { AlertCircle, Award, BookOpen, Calendar, CheckCircle2, ChevronRight, ClipboardList, Clock, Upload } from "lucide-react";
+import { UserContext } from "../context/ContextProvider";
+import AppLayout from "../components/AppLayout";
+import { Badge, Card, EmptyState, GradeBadge, PageLoader, StatCard, StatusBadge, Table, Tabs, Td, Th } from "../components/ui";
+import { API, apiError } from "../lib/api";
+import { formatDate } from "../lib/format";
 
+const statusOrder = { overdue: 0, pending: 1, submitted: 2, graded: 3 };
 
 export default function StudentDashboard() {
-    const {user, logout} = useContext(UserContext);
+    const { user } = useContext(UserContext);
     const navigate = useNavigate();
-    const [activeTab, setActiveTab] = useState('courses');
-
-    const [courses, setCourses] = useState([])
-    const [assignments, setAssignments] = useState([]);
-    const [submissions, setSubmissions] = useState([])
-
-    const delay = (ms) => new Promise((resolve)=>setTimeout(resolve, ms));
-    
+    const [activeTab, setActiveTab] = useState("courses");
+    const [courses, setCourses] = useState([]);
+    const [submissions, setSubmissions] = useState([]);
+    const [loadingData, setLoadingData] = useState(true);
 
     useEffect(() => {
-        const fetchCourses = async() => {
+        if (!user?.id) return;
+        const fetchData = async () => {
             try {
-                const res = await axios.get(`${import.meta.env.VITE_BACKEND_URL}/student/getCourses/${user.id}`)
-                setCourses(res.data.courses)
-                setAssignments(res.data.courses.flatMap(course => 
-                    (course.assignments || []).map(assignment => ({
-                        ...assignment,
-                        courseName: course.name,
-                        courseId: course._id
-                    }))
-                ));
-
-                // console.log(res.data.courses)
-
-                const submissionsRes = await axios.get(`${import.meta.env.VITE_BACKEND_URL}/student/submissions/${user.id}`)
-                // console.log(submissionsRes.data.submissions)
-                setSubmissions(submissionsRes.data.submissions)
+                const [courseRes, submissionsRes] = await Promise.all([
+                    axios.get(`${API}/student/getCourses/${user.id}`),
+                    axios.get(`${API}/student/submissions/${user.id}`)
+                ]);
+                setCourses(courseRes.data.courses || []);
+                setSubmissions(submissionsRes.data.submissions || []);
+            } catch (err) {
+                toast.error(apiError(err, "There was an error loading your courses"));
+            } finally {
+                setLoadingData(false);
             }
-            catch(err) {
-                toast.error("There was an error loading your courses: ", err);
-            }
-        }
-        fetchCourses()
-    }, [user.id])
+        };
+        fetchData();
+    }, [user?.id]);
 
+    const assignments = useMemo(() => courses
+        .flatMap(course => (course.assignments || []).map(assignment => ({ ...assignment, courseName: course.name, courseId: course._id })))
+        .sort((a, b) => (statusOrder[a.status] - statusOrder[b.status]) || (new Date(a.dueDate || 0) - new Date(b.dueDate || 0))),
+    [courses]);
 
-
-    const handleLogout = async () => {
-        navigate("/login")
-        toast.success("Logged out successfully")
-        await delay(1000);
-        logout()
-    };
-
-    const getGradeColor = (grade) => {
-        if (grade.startsWith('A')) return 'text-green-600 bg-green-100';
-        if (grade.startsWith('B')) return 'text-blue-600 bg-blue-100';
-        if (grade.startsWith('C')) return 'text-yellow-600 bg-yellow-100';
-        return 'text-red-600 bg-red-100';
-    };
-
-    const getStatus = (status) => {
-        if(status==="submitted") {
-            return (
-                <span className="inline-flex px-2 py-1 text-xs font-semibold rounded-full text-green-600 bg-green-100">
-                    Submitted
-                </span>
-            )
-        }
-        else if(status==="overdue") {
-            return (
-                <span className="inline-flex px-2 py-1 text-xs font-semibold rounded-full text-red-600 bg-red-100">
-                    Overdue
-                </span>
-            )
-        }
-        else {
-            return (
-                <span className="inline-flex px-2 py-1 text-xs font-semibold rounded-full text-yellow-600 bg-yellow-100">
-                    Under Review
-                </span>
-            )
-        }
-    }
-
+    const graded = submissions.filter(s => s.status === "graded");
+    const awaiting = submissions.filter(s => s.status !== "graded");
+    const todo = assignments.filter(a => a.status === "pending" || a.status === "overdue");
+    const averageScore = graded.length
+        ? Math.round(graded.reduce((sum, s) => sum + (s.assignment?.marks ? (s.marks / s.assignment.marks) * 100 : 0), 0) / graded.length)
+        : null;
 
     return (
-        <div className="min-h-screen bg-gray-50">
-            <Toaster />
-            {/* Header */}
-            <header className="bg-white shadow">
-                <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-4 flex justify-between items-center">
-                <div>
-                    <h1 className="text-3xl font-bold text-gray-900">Welcome, {user.name}</h1>
-                    {/* <p className="text-gray-600">Computer Science Department</p> */}
-                </div>
-                <button
-                    onClick={handleLogout}
-                    className="flex items-center gap-2 px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 transition-colors"
-                >
-                    <LogOut className="h-5 w-5" />
-                    Logout
-                </button>
-                </div>
-            </header>
-
-        {/* Tab Navigation */}
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 mt-6">
-            <div className="border-b border-gray-200">
-            <nav className="-mb-px flex space-x-8">
-                <button
-                onClick={() => setActiveTab('courses')}
-                className={`${
-                    activeTab === 'courses'
-                    ? 'border-blue-500 text-blue-600'
-                    : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
-                } flex items-center gap-2 whitespace-nowrap py-4 px-1 border-b-2 font-medium text-sm`}
-                >
-                <BookOpen className="h-5 w-5" />
-                Enrolled Courses
-                </button>
-                <button
-                onClick={() => setActiveTab('assignments')}
-                className={`${
-                    activeTab === 'assignments'
-                    ? 'border-blue-500 text-blue-600'
-                    : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
-                } flex items-center gap-2 whitespace-nowrap py-4 px-1 border-b-2 font-medium text-sm`}
-                >
-                <ClipboardList className="h-5 w-5" />
-                Your Assignments
-                </button>
-                <button
-                onClick={() => setActiveTab('submissions')}
-                className={`${
-                    activeTab === 'submissions'
-                    ? 'border-blue-500 text-blue-600'
-                    : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
-                } flex items-center gap-2 whitespace-nowrap py-4 px-1 border-b-2 font-medium text-sm`}
-                >
-                <Upload className="h-5 w-5" />
-                My Submissions
-                </button>
-            </nav>
+        <AppLayout eyebrow="Student dashboard" title={`Welcome back, ${user.name.split(" ")[0]}`} subtitle="Keep track of your courses, deadlines and grades.">
+            <div className="mb-6 grid grid-cols-2 gap-3 lg:grid-cols-4">
+                <StatCard label="Courses" value={courses.length} icon={BookOpen} />
+                <StatCard label="To do" value={todo.length} icon={AlertCircle} tone="yellow" />
+                <StatCard label="Awaiting grade" value={awaiting.length} icon={Clock} tone="blue" />
+                <StatCard label="Average score" value={averageScore === null ? "—" : `${averageScore}%`} icon={Award} tone="green" />
             </div>
-        </div>
 
-        {/* Content */}
-        <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
-            {activeTab === 'courses' && (
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-2 gap-6">
-                {courses.map((course) => (
-                <div key={course._id}
-                    onClick={()=>navigate(`/student/courses/${course._id}`)}
-                    className="bg-white rounded-lg shadow p-6 hover:shadow-lg transition-shadow cursor-pointer">
-                    <h3 className="text-xl font-semibold text-gray-900 mb-4">{course.name}</h3>
-                    <div className="space-y-3">
-                    <div className="flex items-center gap-2 text-gray-600">
-                        <Users className="h-5 w-5" />
-                        <span><b>Instructor: </b>{course.faculty.name}</span>
-                    </div>
-                    <div className="flex items-center gap-2 text-gray-600">
-                        <BookOpen className="h-5 w-5" />
-                        <span><b>{course.assignments.length}</b> Assignments</span>
-                    </div>
-                    </div>
-                </div>
-                ))}
+            <div className="mb-5">
+                <Tabs
+                    active={activeTab}
+                    onChange={setActiveTab}
+                    tabs={[
+                        { id: "courses", label: "Courses", icon: BookOpen, count: courses.length },
+                        { id: "assignments", label: "Assignments", icon: ClipboardList, count: assignments.length },
+                        { id: "submissions", label: "Submissions", icon: Upload, count: submissions.length }
+                    ]}
+                />
             </div>
+
+            {loadingData ? <PageLoader /> : (
+                <>
+                    {activeTab === "courses" && (
+                        courses.length === 0 ? (
+                            <EmptyState icon={BookOpen} title="You’re not enrolled in any courses yet" description="Your faculty can add you using the email you signed up with." />
+                        ) : (
+                            <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3">
+                                {courses.map(course => {
+                                    const open = (course.assignments || []).filter(a => a.status === "pending" || a.status === "overdue").length;
+                                    return (
+                                        <Card
+                                            key={course._id}
+                                            role="button"
+                                            tabIndex={0}
+                                            onClick={() => navigate(`/student/courses/${course._id}`)}
+                                            onKeyDown={e => e.key === "Enter" && navigate(`/student/courses/${course._id}`)}
+                                            className="group cursor-pointer p-5 transition hover:-translate-y-0.5 hover:border-indigo-200 hover:shadow-md"
+                                        >
+                                            <div className="mb-4 flex items-start justify-between">
+                                                <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-gradient-to-br from-emerald-500 to-teal-600 text-white">
+                                                    <BookOpen className="h-5 w-5" />
+                                                </div>
+                                                {open > 0 ? <Badge tone="yellow">{open} to do</Badge> : <ChevronRight className="h-5 w-5 text-slate-300 transition group-hover:text-indigo-500" />}
+                                            </div>
+                                            <h3 className="truncate text-base font-semibold text-slate-900">{course.name}</h3>
+                                            <p className="mt-1 truncate text-sm text-slate-500">{course.faculty?.name ? `Prof. ${course.faculty.name}` : "—"}</p>
+                                            <p className="mt-3 flex items-center gap-1.5 text-sm text-slate-500"><ClipboardList className="h-4 w-4" />{course.assignments?.length || 0} assignments</p>
+                                        </Card>
+                                    );
+                                })}
+                            </div>
+                        )
+                    )}
+
+                    {activeTab === "assignments" && (
+                        assignments.length === 0 ? (
+                            <EmptyState icon={ClipboardList} title="No assignments yet" description="Assignments from your courses will appear here." />
+                        ) : (
+                            <Table>
+                                <thead><tr><Th>Assignment</Th><Th>Course</Th><Th>Due</Th><Th>Status</Th></tr></thead>
+                                <tbody className="divide-y divide-slate-100 bg-white">
+                                    {assignments.map(assignment => (
+                                        <tr key={assignment._id} className="cursor-pointer hover:bg-slate-50" onClick={() => navigate(`/student/courses/${assignment.courseId}`)}>
+                                            <Td className="font-medium text-slate-900">{assignment.title}</Td>
+                                            <Td>{assignment.courseName}</Td>
+                                            <Td className="whitespace-nowrap"><span className="flex items-center gap-1.5"><Calendar className="h-4 w-4 text-slate-400" />{formatDate(assignment.dueDate)}</span></Td>
+                                            <Td><StatusBadge status={assignment.status} /></Td>
+                                        </tr>
+                                    ))}
+                                </tbody>
+                            </Table>
+                        )
+                    )}
+
+                    {activeTab === "submissions" && (
+                        submissions.length === 0 ? (
+                            <EmptyState icon={Upload} title="No submissions yet" description="Open a course and submit your first assignment." />
+                        ) : (
+                            <div className="space-y-8">
+                                <section>
+                                    <h2 className="mb-3 flex items-center gap-2 text-base font-semibold text-slate-900"><CheckCircle2 className="h-5 w-5 text-emerald-500" />Graded</h2>
+                                    {graded.length === 0 ? (
+                                        <p className="rounded-lg bg-white px-4 py-3 text-sm text-slate-500 ring-1 ring-slate-200">No graded submissions yet.</p>
+                                    ) : (
+                                        <Table>
+                                            <thead><tr><Th>Assignment</Th><Th>Course</Th><Th>Submitted</Th><Th>Grade</Th><Th>Grader</Th><Th>Feedback</Th></tr></thead>
+                                            <tbody className="divide-y divide-slate-100 bg-white">
+                                                {graded.map(submission => (
+                                                    <tr key={submission._id} className="hover:bg-slate-50">
+                                                        <Td className="font-medium text-slate-900">{submission.assignment?.title || "—"}</Td>
+                                                        <Td>{submission.assignment?.course?.name || "—"}</Td>
+                                                        <Td className="whitespace-nowrap">{formatDate(submission.submittedDate)}</Td>
+                                                        <Td className="whitespace-nowrap">
+                                                            <div className="flex items-center gap-2">
+                                                                <GradeBadge grade={submission.grade} />
+                                                                <span className="text-xs text-slate-500">{submission.marks}/{submission.assignment?.marks ?? "—"}</span>
+                                                            </div>
+                                                        </Td>
+                                                        <Td>{submission.gradedBy?.name || "—"}</Td>
+                                                        <Td className="max-w-xs"><p className="truncate" title={submission.feedback}>{submission.feedback || "—"}</p></Td>
+                                                    </tr>
+                                                ))}
+                                            </tbody>
+                                        </Table>
+                                    )}
+                                </section>
+
+                                <section>
+                                    <h2 className="mb-3 flex items-center gap-2 text-base font-semibold text-slate-900"><Clock className="h-5 w-5 text-amber-500" />Awaiting grade</h2>
+                                    {awaiting.length === 0 ? (
+                                        <p className="rounded-lg bg-white px-4 py-3 text-sm text-slate-500 ring-1 ring-slate-200">Nothing waiting on a grade.</p>
+                                    ) : (
+                                        <Table>
+                                            <thead><tr><Th>Assignment</Th><Th>Course</Th><Th>Submitted</Th><Th>Max marks</Th><Th>Status</Th></tr></thead>
+                                            <tbody className="divide-y divide-slate-100 bg-white">
+                                                {awaiting.map(submission => (
+                                                    <tr key={submission._id} className="hover:bg-slate-50">
+                                                        <Td>
+                                                            <p className="font-medium text-slate-900">{submission.assignment?.title || "—"}</p>
+                                                            <a href={submission.url} target="_blank" rel="noopener noreferrer" className="text-xs text-indigo-600 hover:underline">{submission.filename}</a>
+                                                        </Td>
+                                                        <Td>{submission.assignment?.course?.name || "—"}</Td>
+                                                        <Td className="whitespace-nowrap">{formatDate(submission.submittedDate)}</Td>
+                                                        <Td>{submission.assignment?.marks ?? "—"}</Td>
+                                                        <Td>{submission.status === "overdue" ? <Badge tone="orange">Submitted late</Badge> : <Badge tone="blue">Under review</Badge>}</Td>
+                                                    </tr>
+                                                ))}
+                                            </tbody>
+                                        </Table>
+                                    )}
+                                </section>
+                            </div>
+                        )
+                    )}
+                </>
             )}
-            
-            {/* {getStatusIcon(assignment.status)}
-            <span className={`inline-flex px-2 py-1 text-xs font-semibold rounded-full ${getStatusColor(assignment.status)}`}>
-                {assignment.status.charAt(0).toUpperCase() + assignment.status.slice(1)}
-            </span> */}
-            {activeTab === 'assignments' && (
-               <div className="bg-white shadow rounded-lg overflow-hidden">
-                    <table className="min-w-full divide-y divide-gray-200">
-                    <thead className="bg-gray-50">
-                        <tr>
-                        <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                            Assignment
-                        </th>
-                        <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                            Course
-                        </th>
-                        <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                            Due Date
-                        </th>
-                        <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                            Status
-                        </th>
-                        {/* <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                            Progress
-                        </th> */}
-                        </tr>
-                    </thead>
-                    <tbody className="bg-white divide-y divide-gray-200">
-                        {assignments.map((assignment) => (
-                        <tr key={assignment._id} className="hover:bg-gray-50 cursor-pointer" 
-                            onClick={()=>navigate(`/student/courses/${assignment.courseId}`)}>
-                            <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">
-                            {assignment.title}
-                            </td>
-                            <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                            {assignment.courseName}
-                            </td>
-                            <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                            <div className="flex items-center gap-2">
-                                <Calendar className="h-4 w-4" />
-                                {new Date(assignment.dueDate).toLocaleDateString()}
-                            </div>
-                            </td>
-                            <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                            <div className="flex items-center gap-2">
-                                {getStatus(assignment.status)}
-                            </div>
-                            </td>
-                            {/* <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                            {assignment.submissions.length} / {assignment.course.students.length}
-                            </td> */}
-                            {/* <td className="px-6 py-4 whitespace-nowrap">
-                            <div className="w-full bg-gray-200 rounded-full h-2">
-                                <div 
-                                className="bg-blue-600 h-2 rounded-full" 
-                                style={{ width: `${(assignment.submissions.length / assignment.course.students.length) * 100}%` }}
-                                ></div>
-                            </div>
-                            <span className="text-xs text-gray-500 mt-1">
-                                {Math.round((assignment.submissions.length / assignment.course.students.length) * 100)}%
-                            </span>
-                            </td> */}
-                        </tr>
-                        ))}
-                    </tbody>
-                    </table>
-                </div>
-                )}
-
-            {activeTab === 'submissions' && (
-            <div className="space-y-6">
-                {/* Checked Submissions */}
-                <div>
-                <h2 className="text-xl font-semibold text-gray-900 mb-4 flex items-center gap-2">
-                    <CheckCircle className="h-6 w-6 text-green-500" />
-                    Graded Submissions
-                </h2>
-                <div className="bg-white shadow rounded-lg overflow-hidden">
-                    <table className="min-w-full divide-y divide-gray-200">
-                    <thead className="bg-green-50">
-                        <tr>
-                        <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                            Assignment
-                        </th>
-                        <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                            Course
-                        </th>
-                        <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                            Submitted
-                        </th>
-                        <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                            Grade
-                        </th>
-                        <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                            Grader
-                        </th>
-                        <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                            Feedback
-                        </th>
-                        </tr>
-                    </thead>
-                    <tbody className="bg-white divide-y divide-gray-200">
-                        {submissions.filter(s => s.status === 'graded').map((submission) => (
-                        <tr key={submission._id} className="hover:bg-gray-50">
-                            <td className="px-6 py-4 whitespace-nowrap">
-                            <div>
-                                <div className="text-sm font-medium text-gray-900">{submission.assignment.title}</div>
-                                <div className="text-sm text-gray-500">{submission.filename}</div>
-                            </div>
-                            </td>
-                            <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                            {submission.assignment.course.name}
-                            </td>
-                            <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                                <div className="flex items-center gap-2">
-                                    <Calendar className="h-4 w-4" />
-                                    {new Date(submission.submittedDate).toLocaleDateString()}
-                                </div>
-                            </td>
-                            <td className="px-6 py-4 whitespace-nowrap">
-                                <span className={`inline-flex px-2 py-1 text-xs font-semibold rounded-full ${getGradeColor(submission.grade)}`}>
-                                    {submission.grade}
-                                </span>
-                                <div className="text-xs text-gray-500 mt-1">
-                                   {submission.marks} / {submission.assignment.marks} marks
-                                </div>
-                            </td>
-                            <td className="px-6 py-4 text-sm text-gray-500 max-w-xs">
-                                    {submission.gradedBy.name}
-                            </td>
-                            <td className="px-6 py-4 text-sm text-gray-500 max-w-xs">
-                                <div className="truncate" title={submission.feedback}>
-                                    {submission.feedback}
-                                </div>
-                            </td>
-                        </tr>
-                        ))}
-                    </tbody>
-                    </table>
-                </div>
-                </div>
-
-                {/* Unchecked Submissions */}
-                <div>
-                    <h2 className="text-xl font-semibold text-gray-900 mb-4 flex items-center gap-2">
-                        <Clock className="h-6 w-6 text-yellow-500" />
-                        Pending Review
-                    </h2>
-                <div className="bg-white shadow rounded-lg overflow-hidden">
-                    <table className="min-w-full divide-y divide-gray-200">
-                        <thead className="bg-yellow-50">
-                            <tr>
-                            <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                                Assignment
-                            </th>
-                            <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                                Course
-                            </th>
-                            <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                                Submission Date
-                            </th>
-                            <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                                Max Marks
-                            </th>
-                            <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                                Status
-                            </th>
-                            </tr>
-                        </thead>
-                    <tbody className="bg-white divide-y divide-gray-200">
-                        {submissions.filter(s => s.status === 'pending').map((submission) => (
-                        <tr key={submission._id} className="hover:bg-gray-50">
-                            <td className="px-6 py-4 whitespace-nowrap">
-                            <div>
-                                <div className="text-sm font-medium text-gray-900">{submission.assignment.title}</div>
-                                <div className="text-sm text-gray-500">{submission.filename}</div>
-                            </div>
-                            </td>
-                            <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                            {submission.assignment.course.name}
-                            </td>
-                            <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                            <div className="flex items-center gap-2">
-                                <Calendar className="h-4 w-4" />
-                                {new Date(submission.submittedDate).toLocaleDateString()}
-                            </div>
-                            </td>
-                            <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                            {submission.assignment.marks} marks
-                            </td>
-                            <td className="px-6 py-4 whitespace-nowrap">
-                                <span className="inline-flex px-2 py-1 text-xs font-semibold rounded-full text-yellow-600 bg-yellow-100">
-                                    Under Review
-                                </span>
-                            </td>
-                        </tr>
-                        ))}
-                    </tbody>
-                    </table>
-                </div>
-                </div>
-            </div>
-            )}
-        </main>
-    </div>
-    )
+        </AppLayout>
+    );
 }

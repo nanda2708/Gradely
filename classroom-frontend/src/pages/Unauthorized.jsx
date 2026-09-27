@@ -1,74 +1,41 @@
-import { useContext, useEffect } from "react";
+import { useContext } from "react";
+import { Link, Navigate, useNavigate } from "react-router-dom";
+import { LogOut, ShieldAlert } from "lucide-react";
 import { UserContext } from "../context/ContextProvider";
-import { useNavigate } from "react-router-dom";
-import { ShieldAlert, ArrowLeft, LogOut } from 'lucide-react';
-import { auth } from "../firebase/firebaseConfig";
+import { dashboardPath } from "../lib/api";
+import { Logo } from "../components/AppLayout";
+import { Button } from "../components/ui";
 
 export default function Unauthorized() {
-    const { user, logout } = useContext(UserContext);
+    const { user, loading, logout } = useContext(UserContext);
     const navigate = useNavigate();
 
-    useEffect(() => {
-        if (!user) {
-            navigate("/login");
-        }
-    }, [user, navigate]);
-
-    const handleGoBack = () => {
-        navigate(-1);
-    };
+    if (!loading && !user) return <Navigate to="/login" replace />;
 
     const handleLogout = async () => {
-        try {
-            await auth.signOut();
-            logout();
-            navigate("/login");
-        } catch (err) {
-            console.error("Error logging out:", err);
-        }
+        await logout();
+        navigate("/login", { replace: true });
     };
 
-    if (!user) {
-        return null;
-    }
-
     return (
-        <div className="min-h-screen flex items-center justify-center p-4 bg-gradient-to-br from-red-50 to-orange-50">
-            <div className="bg-white rounded-2xl shadow-xl w-full max-w-md p-8">
-                <div className="text-center mb-8">
-                    <div className="flex justify-center mb-4">
-                        <div className="bg-red-100 p-4 rounded-full">
-                            <ShieldAlert className="h-16 w-16 text-red-600" />
-                        </div>
-                    </div>
-                    <h1 className="text-3xl font-bold text-gray-900 mb-2">Access Denied</h1>
-                    <p className="text-gray-600">
-                        You don't have permission to view this page.
-                    </p>
+        <div className="flex min-h-screen flex-col bg-slate-50">
+            <div className="px-6 py-5"><Logo to={dashboardPath(user?.role)} /></div>
+            <div className="flex flex-1 flex-col items-center justify-center px-4 text-center">
+                <div className="mb-6 flex h-16 w-16 items-center justify-center rounded-2xl bg-rose-50 text-rose-600">
+                    <ShieldAlert className="h-8 w-8" />
                 </div>
-
-                <div className="space-y-3">
-                    <button
-                        onClick={handleGoBack}
-                        className="w-full bg-blue-600 text-white py-3 px-4 rounded-lg hover:bg-blue-700 focus:ring-4 focus:ring-blue-300 flex items-center justify-center gap-2 transition-colors"
-                    >
-                        <ArrowLeft className="h-5 w-5" />
-                        Go Back
-                    </button>
-
-                    <button
-                        onClick={handleLogout}
-                        className="w-full bg-gray-100 text-gray-700 py-3 px-4 rounded-lg hover:bg-gray-200 focus:ring-4 focus:ring-gray-300 flex items-center justify-center gap-2 transition-colors"
-                    >
-                        <LogOut className="h-5 w-5" />
-                        Logout
-                    </button>
-                </div>
-
-                <div className="mt-6 p-4 bg-gray-50 rounded-lg">
-                    <p className="text-sm text-gray-600 text-center">
-                        If you believe this is an error, please contact your administrator.
-                    </p>
+                <h1 className="text-3xl font-bold tracking-tight text-slate-900">Access denied</h1>
+                <p className="mt-2 max-w-sm text-slate-500">
+                    You don’t have permission to view this page. If you think this is a mistake, contact your course faculty.
+                </p>
+                <div className="mt-8 flex flex-col gap-2 sm:flex-row">
+                    <Link to={dashboardPath(user?.role)} className="inline-flex h-10 items-center justify-center rounded-lg bg-indigo-600 px-4 text-sm font-medium text-white hover:bg-indigo-700">
+                        Back to dashboard
+                    </Link>
+                    <Button variant="secondary" onClick={handleLogout}>
+                        <LogOut className="h-4 w-4" />
+                        Log out
+                    </Button>
                 </div>
             </div>
         </div>

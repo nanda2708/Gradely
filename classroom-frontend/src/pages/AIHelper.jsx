@@ -1,167 +1,175 @@
-import { useContext, useEffect, useMemo, useState } from "react";
-import { useNavigate } from "react-router-dom";
-import { ArrowLeft, Bot, Send, Sparkles, User } from "lucide-react";
+import { useContext, useEffect, useMemo, useRef, useState } from "react";
 import axios from "axios";
-import toast, { Toaster } from "react-hot-toast";
+import toast from "react-hot-toast";
+import { Bot, Send, Sparkles, Trash2 } from "lucide-react";
 import { UserContext } from "../context/ContextProvider";
+import AppLayout from "../components/AppLayout";
+import { Avatar, Button, Card, inputClass } from "../components/ui";
+import { API, apiError } from "../lib/api";
+
+const MAX_QUESTION = 4000;
+const suggestions = [
+    "Explain the key concepts this assignment tests",
+    "How should I approach this problem step by step?",
+    "What are common mistakes to avoid here?",
+    "Give me a hint without giving away the answer"
+];
 
 export default function AIHelper() {
     const { user } = useContext(UserContext);
-    const navigate = useNavigate();
     const [courses, setCourses] = useState([]);
     const [assignmentId, setAssignmentId] = useState("");
     const [question, setQuestion] = useState("");
     const [messages, setMessages] = useState([]);
-    const [loading, setLoading] = useState(false);
+    const [thinking, setThinking] = useState(false);
+    const scrollRef = useRef(null);
 
     useEffect(() => {
-        const loadAssignments = async () => {
-            if (!user?.id) return;
-            try {
-                const response = await axios.get(`${import.meta.env.VITE_BACKEND_URL}/student/getCourses/${user.id}`);
-                setCourses(response.data.courses || []);
-            } catch (err) {
-                toast.error(err.response?.data?.error || "Unable to load your assignments");
-            }
-        };
-        loadAssignments();
+        if (!user?.id) return;
+        axios.get(`${API}/student/getCourses/${user.id}`)
+            .then(response => setCourses(response.data.courses || []))
+            .catch(err => toast.error(apiError(err, "Unable to load your assignments")));
     }, [user?.id]);
 
+    useEffect(() => {
+        scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: "smooth" });
+    }, [messages, thinking]);
+
     const assignments = useMemo(() => courses.flatMap(course =>
-        (course.assignments || []).map(assignment => ({
-            ...assignment,
-            courseName: course.name
-        }))
+        (course.assignments || []).map(assignment => ({ ...assignment, courseName: course.name }))
     ), [courses]);
 
-    const askAI = async () => {
-        const cleanQuestion = question.trim();
+    const selectedAssignment = assignments.find(a => a._id === assignmentId);
+
+    const askAI = async (text = question) => {
+        const cleanQuestion = text.trim();
         if (!assignmentId) {
             toast.error("Select an assignment first");
             return;
         }
-        if (!cleanQuestion) return;
-        if (cleanQuestion.length > 4000) {
-            toast.error("Please keep your question under 4000 characters");
+        if (!cleanQuestion || thinking) return;
+        if (cleanQuestion.length > MAX_QUESTION) {
+            toast.error(`Please keep your question under ${MAX_QUESTION} characters`);
             return;
         }
 
-        const userMessage = { role: "user", text: cleanQuestion };
         const previousMessages = messages;
-        setMessages(prev => [...prev, userMessage]);
+        setMessages([...previousMessages, { role: "user", text: cleanQuestion }]);
         setQuestion("");
-        setLoading(true);
+        setThinking(true);
 
         try {
-            const response = await axios.post(`${import.meta.env.VITE_BACKEND_URL}/student/ai-helper/helper`, {
+            const { data } = await axios.post(`${API}/student/ai-helper/helper`, {
                 assignmentId,
                 message: cleanQuestion,
                 history: previousMessages
             });
-            setMessages(prev => [...prev, { role: "model", text: response.data.answer }]);
+            setMessages(current => [...current, { role: "model", text: data.answer }]);
         } catch (err) {
             setMessages(previousMessages);
             setQuestion(cleanQuestion);
-            toast.error(err.response?.data?.error || "AI helper is unavailable right now");
+            toast.error(apiError(err, "AI helper is unavailable right now"));
         } finally {
-            setLoading(false);
+            setThinking(false);
         }
     };
 
-    const selectedAssignment = assignments.find(a => a._id === assignmentId);
-
     return (
-        <div className="min-h-screen bg-gray-50">
-            <Toaster />
-            <header className="bg-white shadow">
-                <div className="max-w-5xl mx-auto px-4 py-4 flex items-center gap-4">
-                    <button onClick={() => navigate("/student")} className="p-2 rounded-lg hover:bg-gray-100">
-                        <ArrowLeft className="h-5 w-5" />
-                    </button>
-                    <div className="flex items-center gap-3">
-                        <div className="p-2 rounded-xl bg-blue-100 text-blue-700"><Bot className="h-6 w-6" /></div>
-                        <div>
-                            <h1 className="text-xl font-bold text-gray-900">Gradely AI Helper</h1>
-                            <p className="text-sm text-gray-500">Ask doubts and learn step-by-step</p>
-                        </div>
-                    </div>
+        <AppLayout eyebrow="Study assistant" title="AI Helper" subtitle="Ask questions about an assignment and learn step by step.">
+            <Card className="flex h-[calc(100vh-14rem)] min-h-[520px] flex-col overflow-hidden">
+                <div className="flex flex-col gap-3 border-b border-slate-100 p-4 sm:flex-row sm:items-center">
+                    <label htmlFor="assignment" className="shrink-0 text-sm font-medium text-slate-700">Assignment</label>
+                    <select
+                        id="assignment"
+                        value={assignmentId}
+                        onChange={(e) => { setAssignmentId(e.target.value); setMessages([]); }}
+                        className={`${inputClass} sm:max-w-md`}
+                    >
+                        <option value="">Select an assignment…</option>
+                        {assignments.map(assignment => (
+                            <option key={assignment._id} value={assignment._id}>{assignment.courseName} — {assignment.title}</option>
+                        ))}
+                    </select>
+                    {messages.length > 0 && (
+                        <Button variant="ghost" size="sm" className="sm:ml-auto" onClick={() => setMessages([])}>
+                            <Trash2 className="h-4 w-4" />
+                            Clear chat
+                        </Button>
+                    )}
                 </div>
-            </header>
 
-            <main className="max-w-5xl mx-auto px-4 py-6">
-                <div className="bg-white rounded-xl shadow overflow-hidden">
-                    <div className="p-5 border-b">
-                        <label className="block text-sm font-medium text-gray-700 mb-2">Choose an assignment</label>
-                        <select
-                            value={assignmentId}
-                            onChange={(e) => { setAssignmentId(e.target.value); setMessages([]); }}
-                            className="w-full border rounded-lg px-3 py-2 bg-white"
-                        >
-                            <option value="">Select an assignment...</option>
-                            {assignments.map(assignment => (
-                                <option key={assignment._id} value={assignment._id}>
-                                    {assignment.courseName} — {assignment.title}
-                                </option>
-                            ))}
-                        </select>
-                        {selectedAssignment && (
-                            <div className="mt-3 p-3 rounded-lg bg-blue-50 text-sm text-blue-900">
-                                <strong>{selectedAssignment.title}</strong>
-                                <span className="block mt-1">{selectedAssignment.description || "Ask me anything about this assignment."}</span>
+                <div ref={scrollRef} className="flex-1 space-y-5 overflow-y-auto bg-slate-50/60 p-4 sm:p-6">
+                    {messages.length === 0 ? (
+                        <div className="flex h-full flex-col items-center justify-center text-center">
+                            <div className="mb-4 flex h-14 w-14 items-center justify-center rounded-2xl bg-gradient-to-br from-indigo-500 to-violet-600 text-white shadow-lg shadow-indigo-500/20">
+                                <Sparkles className="h-7 w-7" />
                             </div>
-                        )}
-                    </div>
-
-                    <div className="min-h-[420px] max-h-[55vh] overflow-y-auto p-5 space-y-4">
-                        {messages.length === 0 && (
-                            <div className="h-full flex items-center justify-center text-center text-gray-500 py-20">
-                                <div>
-                                    <Sparkles className="h-10 w-10 mx-auto mb-3 text-blue-500" />
-                                    <p className="font-medium text-gray-700">Your AI study helper is ready.</p>
-                                    <p className="text-sm mt-1">Select an assignment and ask a conceptual doubt.</p>
+                            <h2 className="text-lg font-semibold text-slate-900">
+                                {selectedAssignment ? selectedAssignment.title : "Pick an assignment to get started"}
+                            </h2>
+                            <p className="mt-1 max-w-md text-sm text-slate-500">
+                                {selectedAssignment?.description || "The helper explains concepts and gives hints — it won’t write your submission for you."}
+                            </p>
+                            {selectedAssignment && (
+                                <div className="mt-6 grid w-full max-w-xl grid-cols-1 gap-2 sm:grid-cols-2">
+                                    {suggestions.map(text => (
+                                        <button key={text} type="button" onClick={() => askAI(text)} className="rounded-xl border border-slate-200 bg-white px-4 py-3 text-left text-sm text-slate-700 transition hover:border-indigo-300 hover:bg-indigo-50/50">
+                                            {text}
+                                        </button>
+                                    ))}
                                 </div>
-                            </div>
-                        )}
-                        {messages.map((message, index) => (
-                            <div key={`${message.role}-${index}`} className={`flex gap-3 ${message.role === "user" ? "justify-end" : "justify-start"}`}>
-                                {message.role === "model" && <div className="p-2 rounded-full bg-blue-100 text-blue-700 h-fit"><Bot className="h-4 w-4" /></div>}
-                                <div className={`max-w-[80%] rounded-xl px-4 py-3 whitespace-pre-wrap ${message.role === "user" ? "bg-blue-600 text-white" : "bg-gray-100 text-gray-800"}`}>
+                            )}
+                        </div>
+                    ) : (
+                        messages.map((message, index) => (
+                            <div key={`${message.role}-${index}`} className={`flex gap-3 ${message.role === "user" ? "flex-row-reverse" : ""}`}>
+                                {message.role === "user" ? (
+                                    <Avatar name={user.name} size="sm" />
+                                ) : (
+                                    <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-gradient-to-br from-indigo-500 to-violet-600 text-white"><Bot className="h-4 w-4" /></div>
+                                )}
+                                <div className={`max-w-[85%] whitespace-pre-wrap rounded-2xl px-4 py-3 text-sm leading-relaxed ${
+                                    message.role === "user" ? "rounded-tr-sm bg-indigo-600 text-white" : "rounded-tl-sm bg-white text-slate-800 ring-1 ring-slate-200"
+                                }`}>
                                     {message.text}
                                 </div>
-                                {message.role === "user" && <div className="p-2 rounded-full bg-gray-200 text-gray-700 h-fit"><User className="h-4 w-4" /></div>}
                             </div>
-                        ))}
-                        {loading && <div className="text-sm text-gray-500">AI is thinking...</div>}
-                    </div>
-
-                    <div className="border-t p-4">
-                        <div className="flex gap-2">
-                            <textarea
-                                value={question}
-                                onChange={(e) => setQuestion(e.target.value)}
-                                onKeyDown={(e) => {
-                                    if (e.key === "Enter" && !e.shiftKey) {
-                                        e.preventDefault();
-                                        askAI();
-                                    }
-                                }}
-                                placeholder="Ask your assignment doubt..."
-                                rows={2}
-                                disabled={loading}
-                                className="flex-1 resize-none border rounded-xl px-4 py-3 focus:outline-none focus:ring-2 focus:ring-blue-500"
-                            />
-                            <button
-                                onClick={askAI}
-                                disabled={loading || !question.trim() || !assignmentId}
-                                className="self-end px-4 py-3 rounded-xl bg-blue-600 text-white hover:bg-blue-700 disabled:bg-gray-300"
-                            >
-                                <Send className="h-5 w-5" />
-                            </button>
+                        ))
+                    )}
+                    {thinking && (
+                        <div className="flex gap-3">
+                            <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-gradient-to-br from-indigo-500 to-violet-600 text-white"><Bot className="h-4 w-4" /></div>
+                            <div className="flex items-center gap-1 rounded-2xl rounded-tl-sm bg-white px-4 py-3 ring-1 ring-slate-200">
+                                {[0, 150, 300].map(delay => <span key={delay} className="h-2 w-2 animate-bounce rounded-full bg-slate-400" style={{ animationDelay: `${delay}ms` }} />)}
+                            </div>
                         </div>
-                        <p className="text-xs text-gray-400 mt-2">Use AI for learning and explanations; verify important answers with your course material.</p>
-                    </div>
+                    )}
                 </div>
-            </main>
-        </div>
+
+                <form onSubmit={(e) => { e.preventDefault(); askAI(); }} className="border-t border-slate-100 p-4">
+                    <div className="flex items-end gap-2">
+                        <textarea
+                            value={question}
+                            onChange={(e) => setQuestion(e.target.value)}
+                            onKeyDown={(e) => {
+                                if (e.key === "Enter" && !e.shiftKey) {
+                                    e.preventDefault();
+                                    askAI();
+                                }
+                            }}
+                            placeholder={assignmentId ? "Ask a question… (Shift+Enter for a new line)" : "Select an assignment first"}
+                            rows={2}
+                            maxLength={MAX_QUESTION}
+                            disabled={thinking || !assignmentId}
+                            className={`${inputClass} resize-none`}
+                        />
+                        <Button type="submit" size="lg" disabled={thinking || !question.trim() || !assignmentId} aria-label="Send">
+                            <Send className="h-4 w-4" />
+                        </Button>
+                    </div>
+                    <p className="mt-2 text-xs text-slate-400">AI can make mistakes — verify important answers with your course material.</p>
+                </form>
+            </Card>
+        </AppLayout>
     );
 }

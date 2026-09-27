@@ -1,299 +1,153 @@
+import { useContext, useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { UserContext } from "../context/ContextProvider";
-import { useContext, useEffect, useState } from "react";
-import { BookOpen, ClipboardList, LogOut, CheckCircle, Users, Calendar } from "lucide-react";
 import axios from "axios";
-import toast, { Toaster } from "react-hot-toast";
+import toast from "react-hot-toast";
+import { BookOpen, Calendar, CheckCircle2, ChevronRight, ClipboardList, Inbox, Users } from "lucide-react";
+import { UserContext } from "../context/ContextProvider";
+import AppLayout from "../components/AppLayout";
+import { Card, EmptyState, GradeBadge, PageLoader, ProgressBar, StatCard, Table, Tabs, Td, Th } from "../components/ui";
+import { API, apiError } from "../lib/api";
+import { countUngradedLatest, formatDate, percent, uniqueStudentCount } from "../lib/format";
 
 export default function TADashboard() {
-    const {user, loading, logout} = useContext(UserContext)
+    const { user } = useContext(UserContext);
     const navigate = useNavigate();
-    const delay = (ms) => new Promise((resolve)=>setTimeout(resolve, ms));
-
-    const [courses, setCourses] = useState([])
-    const [activeTab, setActiveTab] = useState('courses');
-
-    const [assignments, setAssignments] = useState([])
-    const [checkedSolutions, setCheckedSolutions] = useState([])
-
+    const [courses, setCourses] = useState([]);
+    const [checkedSolutions, setCheckedSolutions] = useState([]);
+    const [activeTab, setActiveTab] = useState("courses");
+    const [loadingData, setLoadingData] = useState(true);
 
     useEffect(() => {
-        if(loading) return;
-        const fetchCourses = async() => {
-             try {
-                const res = await axios.get(`${import.meta.env.VITE_BACKEND_URL}/ta/getCourses/${user.id}`)
-
-                const courses = res.data.courses
-                setCourses(courses)
-
-                const allAssignments = courses.flatMap(course => course.assignments || []);
-                setAssignments(allAssignments)
-
-                const checkedSolutions = await axios.get(`${import.meta.env.VITE_BACKEND_URL}/ta/getCheckedSolutions/${user.id}`)
-                setCheckedSolutions(checkedSolutions.data.checkedSolutions || [])
+        if (!user?.id) return;
+        const fetchData = async () => {
+            try {
+                const [courseRes, checkedRes] = await Promise.all([
+                    axios.get(`${API}/ta/getCourses/${user.id}`),
+                    axios.get(`${API}/ta/getCheckedSolutions/${user.id}`)
+                ]);
+                setCourses(courseRes.data.courses || []);
+                setCheckedSolutions(checkedRes.data.checkedSolutions || []);
+            } catch (err) {
+                toast.error(apiError(err, "Error loading your courses"));
+            } finally {
+                setLoadingData(false);
             }
-            catch(err) {
-                toast.error("Error loading courses: ", err);
-            }
-        }
+        };
+        fetchData();
+    }, [user?.id]);
 
-        if(user) fetchCourses()
-    }, [loading, user])
+    const assignments = useMemo(() => courses.flatMap(course =>
+        (course.assignments || []).map(assignment => ({ ...assignment, courseId: course._id, courseName: course.name, studentCount: course.students?.length || 0 }))
+    ), [courses]);
 
-    // const checkedSolutions = [
-    //     { 
-    //     id: '1', 
-    //     studentName: 'Alice Johnson', 
-    //     assignment: 'Binary Trees Implementation', 
-    //     course: 'Data Structures', 
-    //     grade: 'A-', 
-    //     checkedDate: '2024-03-20', 
-    //     feedback: 'Good implementation, minor optimization needed' 
-    //     },
-    //     { 
-    //     id: '2', 
-    //     studentName: 'Bob Smith', 
-    //     assignment: 'Sorting Algorithms', 
-    //     course: 'Algorithms', 
-    //     grade: 'B+', 
-    //     checkedDate: '2024-03-22', 
-    //     feedback: 'Correct logic, could improve time complexity' 
-    //     },
-    //     { 
-    //     id: '3', 
-    //     studentName: 'Carol Davis', 
-    //     assignment: 'SQL Queries', 
-    //     course: 'Database Systems', 
-    //     grade: 'A', 
-    //     checkedDate: '2024-03-23', 
-    //     feedback: 'Excellent work, all queries optimized' 
-    //     },
-    //     { 
-    //     id: '4', 
-    //     studentName: 'David Wilson', 
-    //     assignment: 'Binary Trees Implementation', 
-    //     course: 'Data Structures', 
-    //     grade: 'B', 
-    //     checkedDate: '2024-03-21', 
-    //     feedback: 'Good understanding, some edge cases missed' 
-    //     },
-    // ];
-
-    const handleLogout = async () => {
-        navigate('/login');
-        toast.success("Logged out succesfully")
-        await delay(1000)
-        
-        logout()
-    };
-
-    const getGradeColor = (grade) => {
-        if (grade.startsWith('A')) return 'text-green-600 bg-green-100';
-        if (grade.startsWith('B')) return 'text-blue-600 bg-blue-100';
-        if (grade.startsWith('C')) return 'text-yellow-600 bg-yellow-100';
-        return 'text-red-600 bg-red-100';
-    };
+    const toGrade = assignments.reduce((sum, assignment) => sum + countUngradedLatest(assignment.submissions), 0);
 
     return (
-        <div className="min-h-screen bg-gray-50">
-            <Toaster />
-            {/* Header */}
-            <header className="bg-white shadow">
-                <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-4 flex justify-between items-center">
-                <div>
-                    <h1 className="text-3xl font-bold text-gray-900">Welcome, {user.name}</h1>
-                </div>
-                <button
-                    onClick={handleLogout}
-                    className="flex items-center gap-2 px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 transition-colors"
-                >
-                    <LogOut className="h-5 w-5" />
-                    Logout
-                </button>
-                </div>
-            </header>
-
-            {/* Tab Navigation */}
-            <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 mt-6">
-                <div className="border-b border-gray-200">
-                <nav className="-mb-px flex space-x-8">
-                    <button
-                    onClick={() => setActiveTab('courses')}
-                    className={`${
-                        activeTab === 'courses'
-                        ? 'border-blue-500 text-blue-600'
-                        : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
-                    } flex items-center gap-2 whitespace-nowrap py-4 px-1 border-b-2 font-medium text-sm`}
-                    >
-                    <BookOpen className="h-5 w-5" />
-                    My Courses
-                    </button>
-                    <button
-                    onClick={() => setActiveTab('assignments')}
-                    className={`${
-                        activeTab === 'assignments'
-                        ? 'border-blue-500 text-blue-600'
-                        : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
-                    } flex items-center gap-2 whitespace-nowrap py-4 px-1 border-b-2 font-medium text-sm`}
-                    >
-                    <ClipboardList className="h-5 w-5" />
-                    Assignments
-                    </button>
-                    <button
-                    onClick={() => setActiveTab('solutions')}
-                    className={`${
-                        activeTab === 'solutions'
-                        ? 'border-blue-500 text-blue-600'
-                        : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
-                    } flex items-center gap-2 whitespace-nowrap py-4 px-1 border-b-2 font-medium text-sm`}
-                    >
-                    <CheckCircle className="h-5 w-5" />
-                    Checked Solutions
-                    </button>
-                </nav>
-                </div>
+        <AppLayout eyebrow="Teaching assistant" title={`Welcome back, ${user.name.split(" ")[0]}`} subtitle="Your courses and grading queue at a glance.">
+            <div className="mb-6 grid grid-cols-2 gap-3 lg:grid-cols-4">
+                <StatCard label="Courses" value={courses.length} icon={BookOpen} />
+                <StatCard label="Assignments" value={assignments.length} icon={ClipboardList} tone="purple" />
+                <StatCard label="Awaiting grading" value={toGrade} icon={Inbox} tone="yellow" />
+                <StatCard label="Graded by you" value={checkedSolutions.length} icon={CheckCircle2} tone="green" />
             </div>
 
-            {/* Content */}
-            <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
-                {activeTab === 'courses' && (
-                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-                    {courses.map((course) => (
-                    <div key={course._id}
-                    onClick={() => navigate(`/ta/courses/${course._id}`)}
-                     className="bg-white rounded-lg shadow p-6 hover:shadow-lg cursor-pointer transition-shadow">
-                        <h3 className="text-xl font-semibold text-gray-900 mb-4">{course.name}</h3>
-                        <div className="space-y-3">
-                        <div className="flex items-center gap-2 text-gray-600">
-                            <Users className="h-5 w-5" />
-                            <span>{course.students.length} Student(s)</span>
-                        </div>
-                        <div className="flex items-center gap-2 text-gray-600">
-                            <BookOpen className="h-5 w-5" />
-                            <span>Faculty: {course.faculty.name}</span>
-                        </div>
-                        </div>
-                    </div>
-                    ))}
-                </div>
-                )}
+            <div className="mb-5">
+                <Tabs
+                    active={activeTab}
+                    onChange={setActiveTab}
+                    tabs={[
+                        { id: "courses", label: "My courses", icon: BookOpen, count: courses.length },
+                        { id: "assignments", label: "Assignments", icon: ClipboardList, count: assignments.length },
+                        { id: "solutions", label: "Graded by me", icon: CheckCircle2, count: checkedSolutions.length }
+                    ]}
+                />
+            </div>
 
-                {activeTab === 'assignments' && (
-                <div className="bg-white shadow rounded-lg overflow-hidden">
-                    <table className="min-w-full divide-y divide-gray-200">
-                    <thead className="bg-gray-50">
-                        <tr>
-                        <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                            Assignment
-                        </th>
-                        <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                            Course
-                        </th>
-                        <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                            Due Date
-                        </th>
-                        <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                            Submissions
-                        </th>
-                        <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                            Progress
-                        </th>
-                        </tr>
-                    </thead>
-                    <tbody className="bg-white divide-y divide-gray-200">
-                        {assignments.map((assignment) => (
-                        <tr key={assignment._id} className="hover:bg-gray-50">
-                            <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">
-                            {assignment.title}
-                            </td>
-                            <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                            {assignment.course.name}
-                            </td>
-                            <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                            <div className="flex items-center gap-2">
-                                <Calendar className="h-4 w-4" />
-                                {new Date(assignment.dueDate).toLocaleDateString()}
+            {loadingData ? <PageLoader /> : (
+                <>
+                    {activeTab === "courses" && (
+                        courses.length === 0 ? (
+                            <EmptyState icon={BookOpen} title="No courses yet" description="Ask your faculty to add you to a course using your Gradely email." />
+                        ) : (
+                            <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3">
+                                {courses.map(course => (
+                                    <Card
+                                        key={course._id}
+                                        role="button"
+                                        tabIndex={0}
+                                        onClick={() => navigate(`/ta/courses/${course._id}`)}
+                                        onKeyDown={e => e.key === "Enter" && navigate(`/ta/courses/${course._id}`)}
+                                        className="group cursor-pointer p-5 transition hover:-translate-y-0.5 hover:border-indigo-200 hover:shadow-md"
+                                    >
+                                        <div className="mb-4 flex items-start justify-between">
+                                            <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-gradient-to-br from-sky-500 to-indigo-600 text-white">
+                                                <BookOpen className="h-5 w-5" />
+                                            </div>
+                                            <ChevronRight className="h-5 w-5 text-slate-300 transition group-hover:translate-x-0.5 group-hover:text-indigo-500" />
+                                        </div>
+                                        <h3 className="truncate text-base font-semibold text-slate-900">{course.name}</h3>
+                                        <p className="mt-1 truncate text-sm text-slate-500">{course.faculty?.name ? `Prof. ${course.faculty.name}` : "—"}</p>
+                                        <div className="mt-3 flex gap-4 text-sm text-slate-500">
+                                            <span className="flex items-center gap-1.5"><Users className="h-4 w-4" />{course.students?.length || 0} students</span>
+                                            <span className="flex items-center gap-1.5"><ClipboardList className="h-4 w-4" />{course.assignments?.length || 0} assignments</span>
+                                        </div>
+                                    </Card>
+                                ))}
                             </div>
-                            </td>
-                            <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                            {assignment.submissions.length} / {assignment.course.students.length}
-                            </td>
-                            <td className="px-6 py-4 whitespace-nowrap">
-                            <div className="w-full bg-gray-200 rounded-full h-2">
-                                <div 
-                                className="bg-blue-600 h-2 rounded-full" 
-                                style={{ width: `${(assignment.submissions.length / assignment.course.students.length) * 100}%` }}
-                                ></div>
-                            </div>
-                            <span className="text-xs text-gray-500 mt-1">
-                                {Math.round((assignment.submissions.length / assignment.course.students.length) * 100)}%
-                            </span>
-                            </td>
-                        </tr>
-                        ))}
-                    </tbody>
-                    </table>
-                </div>
-                )}
+                        )
+                    )}
 
-                {activeTab === 'solutions' && (
-                <div className="bg-white shadow rounded-lg overflow-hidden">
-                    <table className="min-w-full divide-y divide-gray-200">
-                    <thead className="bg-gray-50">
-                        <tr>
-                        <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                            Student
-                        </th>
-                        <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                            Assignment
-                        </th>
-                        <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                            Course
-                        </th>
-                        <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                            Grade
-                        </th>
-                        <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                            Checked Date
-                        </th>
-                        <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                            Feedback
-                        </th>
-                        </tr>
-                    </thead>
-                    <tbody className="bg-white divide-y divide-gray-200">
-                        {checkedSolutions.map((solution) => (
-                        <tr key={solution._id} className="hover:bg-gray-50">
-                            <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">
-                            {solution.studentName}
-                            </td>
-                            <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                            {solution.assignment}
-                            </td>
-                            <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                            {solution.course}
-                            </td>
-                            <td className="px-6 py-4 whitespace-nowrap">
-                            <span className={`inline-flex px-2 py-1 text-xs font-semibold rounded-full ${getGradeColor(solution.grade)}`}>
-                                {solution.grade}
-                            </span>
-                            </td>
-                            <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                            <div className="flex items-center gap-2">
-                                <Calendar className="h-4 w-4" />
-                                {new Date(solution.checkedDate).toLocaleDateString()}
-                            </div>
-                            </td>
-                            <td className="px-6 py-4 text-sm text-gray-500 max-w-xs truncate">
-                            {solution.feedback}
-                            </td>
-                        </tr>
-                        ))}
-                    </tbody>
-                    </table>
-                </div>
-                )}
-            </main>
-        </div>
-    )
+                    {activeTab === "assignments" && (
+                        assignments.length === 0 ? (
+                            <EmptyState icon={ClipboardList} title="No assignments yet" description="Assignments published in your courses will appear here." />
+                        ) : (
+                            <Table>
+                                <thead><tr><Th>Assignment</Th><Th>Course</Th><Th>Due</Th><Th className="w-48">Submitted</Th></tr></thead>
+                                <tbody className="divide-y divide-slate-100 bg-white">
+                                    {assignments.map(assignment => {
+                                        const submitted = uniqueStudentCount(assignment.submissions);
+                                        return (
+                                            <tr key={assignment._id} className="cursor-pointer hover:bg-slate-50" onClick={() => navigate(`/ta/courses/${assignment.courseId}`)}>
+                                                <Td className="font-medium text-slate-900">{assignment.title}</Td>
+                                                <Td>{assignment.courseName}</Td>
+                                                <Td className="whitespace-nowrap"><span className="flex items-center gap-1.5"><Calendar className="h-4 w-4 text-slate-400" />{formatDate(assignment.dueDate)}</span></Td>
+                                                <Td><ProgressBar value={percent(submitted, assignment.studentCount)} label={`${submitted} of ${assignment.studentCount} students`} /></Td>
+                                            </tr>
+                                        );
+                                    })}
+                                </tbody>
+                            </Table>
+                        )
+                    )}
+
+                    {activeTab === "solutions" && (
+                        checkedSolutions.length === 0 ? (
+                            <EmptyState icon={CheckCircle2} title="Nothing graded yet" description="Submissions you grade will be listed here." />
+                        ) : (
+                            <Table>
+                                <thead><tr><Th>Student</Th><Th>Assignment</Th><Th>Course</Th><Th>Grade</Th><Th>Graded</Th><Th>Feedback</Th></tr></thead>
+                                <tbody className="divide-y divide-slate-100 bg-white">
+                                    {checkedSolutions.map(solution => (
+                                        <tr key={solution._id} className="hover:bg-slate-50">
+                                            <Td className="font-medium text-slate-900">{solution.student?.name || "—"}</Td>
+                                            <Td>{solution.assignment?.title || "—"}</Td>
+                                            <Td>{solution.assignment?.course?.name || "—"}</Td>
+                                            <Td className="whitespace-nowrap">
+                                                <div className="flex items-center gap-2">
+                                                    <GradeBadge grade={solution.grade} />
+                                                    <span className="text-xs text-slate-500">{solution.marks}/{solution.assignment?.marks ?? "—"}</span>
+                                                </div>
+                                            </Td>
+                                            <Td className="whitespace-nowrap">{formatDate(solution.checkedDate)}</Td>
+                                            <Td className="max-w-xs"><p className="truncate" title={solution.feedback}>{solution.feedback || "—"}</p></Td>
+                                        </tr>
+                                    ))}
+                                </tbody>
+                            </Table>
+                        )
+                    )}
+                </>
+            )}
+        </AppLayout>
+    );
 }

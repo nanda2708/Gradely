@@ -1,963 +1,380 @@
-import { useState, useEffect, useContext, useCallback } from "react";
+import { useCallback, useContext, useEffect, useMemo, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
-import { UserContext } from "../context/ContextProvider";
-import { ArrowLeft, Users, BookOpen, ClipboardList, Upload, CheckCircle, Clock, AlertCircle,Menu,X,Calendar,User,
-         GraduationCap, FileText, RefreshCw, Eye, Send, Paperclip} from 'lucide-react';
 import axios from "axios";
-import toast, { Toaster } from "react-hot-toast";
+import toast from "react-hot-toast";
+import { AlertTriangle, Calendar, CheckCircle2, ClipboardList, Clock, Eye, FileText, Paperclip, RefreshCw, Send, Trash2, Upload, User } from "lucide-react";
+import { UserContext } from "../context/ContextProvider";
+import AppLayout from "../components/AppLayout";
+import Participants from "../components/Participants";
+import { Badge, Button, Card, EmptyState, Field, GradeBadge, Modal, PageLoader, PdfModal, StatusBadge, Tabs, inputClass } from "../components/ui";
+import { API, apiError } from "../lib/api";
+import { dueLabel, formatDate, isPastDue } from "../lib/format";
 
+const MAX_FILE_BYTES = 15 * 1024 * 1024;
+
+const reevalBadge = (submission) => {
+    if (submission.reevalStatus === "pending") return <Badge tone="orange" icon={RefreshCw}>Re-evaluation pending</Badge>;
+    if (submission.reevalStatus === "resolved") return <Badge tone="green">Re-evaluated</Badge>;
+    if (submission.reevalStatus === "rejected") return <Badge tone="gray">Re-evaluation declined</Badge>;
+    return null;
+};
 
 export default function StudentCourse() {
-    const {user, loading} = useContext(UserContext)
-    const navigate = useNavigate()
-    const {courseId} = useParams()
+    const { user } = useContext(UserContext);
+    const navigate = useNavigate();
+    const { courseId } = useParams();
 
-    // Display
-    const [activeTab, setActiveTab] = useState('assignments');
-    const [showSidebar, setShowSidebar] = useState(false);
-    const [showReEvalModal, setShowReEvalModal] = useState(false);
+    const [course, setCourse] = useState(null);
+    const [assignments, setAssignments] = useState([]);
+    const [submissions, setSubmissions] = useState([]);
+    const [activeTab, setActiveTab] = useState("assignments");
+    const [pdfUrl, setPdfUrl] = useState("");
 
-
-    // Submission State
-    const [selectedSubmission, setSelectedSubmission] = useState(null);
-    const [reEvalReason, setReEvalReason] = useState('');
-    const [showSubmissionModal, setShowSubmissionModal] = useState(false);
     const [selectedAssignment, setSelectedAssignment] = useState(null);
-    const [submissionForm, setSubmissionForm] = useState({file: null})
-    const [uploading, setUploading] = useState(false)
+    const [file, setFile] = useState(null);
+    const [uploading, setUploading] = useState(false);
 
-    // Page Data
-    const [courseData, setCourseData] = useState([])
-    const [faculty, setFaculty] = useState(null)
-    const [tas, setTas] = useState([])
-    const [students, setStudents] = useState([])
-    const [assignments, setAssignments] = useState([])
-    const [submissions, setSubmissions] = useState([])
-    // const [submittedAssignments, setSubmittedAssignments] = useState([]);
-
-    // PDF View State
-    const [showPdfViewer, setShowPdfViewer] = useState(false);
-    const [selectedPdfUrl, setSelectedPdfUrl] = useState('');
+    const [reevalTarget, setReevalTarget] = useState(null);
+    const [reevalReason, setReevalReason] = useState("");
+    const [requestingReeval, setRequestingReeval] = useState(false);
 
     const fetchCourse = useCallback(async () => {
-      const res = await axios.get(`${import.meta.env.VITE_BACKEND_URL}/course/getStudent/${courseId}`);
-      setCourseData(res.data);
-      setFaculty(res.data.faculty);
-      setTas(res.data.tas || []);
-      setStudents(res.data.students || []);
-
-      const [assignmentRes, submissionRes] = await Promise.all([
-        axios.get(`${import.meta.env.VITE_BACKEND_URL}/course/getAssignments/${courseId}`),
-        axios.get(`${import.meta.env.VITE_BACKEND_URL}/student/${user.id}/course/${courseId}/submissions`)
-      ]);
-      const submittedAssignments = submissionRes.data.submittedAssignments || [];
-      setSubmissions(submissionRes.data.submissions || []);
-      setAssignments((assignmentRes.data.assignments || []).map(assignment => ({
-        ...assignment,
-        status: submittedAssignments.includes(assignment._id)
-          ? 'submitted'
-          : isOverdue(assignment.dueDate) ? 'overdue' : 'pending'
-      })));
-    }, [courseId, user?.id]);
-
+        const [courseRes, assignmentRes, submissionRes] = await Promise.all([
+            axios.get(`${API}/course/getStudent/${courseId}`),
+            axios.get(`${API}/course/getAssignments/${courseId}`),
+            axios.get(`${API}/student/${user.id}/course/${courseId}/submissions`)
+        ]);
+        setCourse(courseRes.data);
+        setAssignments(assignmentRes.data.assignments || []);
+        setSubmissions(submissionRes.data.submissions || []);
+    }, [courseId, user.id]);
 
     useEffect(() => {
-        if(loading) return;
-        const fetchCourses = async() => {
-             try {
-              await fetchCourse();
-          }
-          catch(err) {
-              const status = err.response?.status;
-              if (status === 401) navigate('/login', { replace: true });
-              else if (status === 403) navigate('/unauthorized', { replace: true });
-              else toast.error(err.response?.data?.error || "Unable to load this course");
-          }
+        fetchCourse().catch(err => {
+            const status = err.response?.status;
+            if (status === 401) navigate("/login", { replace: true });
+            else if (status === 403) navigate("/unauthorized", { replace: true });
+            else if (status === 404) navigate("/student", { replace: true });
+            toast.error(apiError(err, "Unable to load this course"));
+        });
+    }, [fetchCourse, navigate]);
+
+    // Submissions arrive newest first, so the first match is the latest attempt.
+    const assignmentsWithStatus = useMemo(() => assignments.map(assignment => {
+        const latest = submissions.find(s => (s.assignment?._id || s.assignment) === assignment._id);
+        let status = isPastDue(assignment.dueDate) ? "overdue" : "pending";
+        if (latest) status = latest.status === "graded" ? "graded" : "submitted";
+        return { ...assignment, status, latest };
+    }), [assignments, submissions]);
+
+    const todo = assignmentsWithStatus.filter(a => a.status === "pending" || a.status === "overdue");
+    const graded = submissions.filter(s => s.status === "graded");
+    const awaiting = submissions.filter(s => s.status !== "graded");
+
+    const openSubmit = (assignment) => {
+        setSelectedAssignment(assignment);
+        setFile(null);
+    };
+
+    const closeSubmit = () => {
+        if (uploading) return;
+        setSelectedAssignment(null);
+        setFile(null);
+    };
+
+    const handleFileSelect = (event) => {
+        const picked = event.target.files?.[0];
+        event.target.value = "";
+        if (!picked) return;
+        if (picked.type !== "application/pdf") {
+            toast.error("Please upload your solution as a PDF.");
+            return;
         }
-
-        if(user) fetchCourses()
-
-    }, [fetchCourse, loading, navigate, user])
-
-
-    const pendingAssignments = assignments.filter(a => a.status === 'pending' || a.status === 'overdue');
-
-    const handleBack = () => {
-        navigate('/student');
-    };
-
-    const getStatusIcon = (status) => {
-        switch (status) {
-        case 'pending':
-            return <Clock className="h-5 w-5 text-yellow-500" />;
-        case 'submitted':
-            return <CheckCircle className="h-5 w-5 text-green-500" />;
-        case 'overdue':
-            return <AlertCircle className="h-5 w-5 text-red-500" />;
-        default:
-            return null;
+        if (picked.size > MAX_FILE_BYTES) {
+            toast.error("File must be 15 MB or smaller.");
+            return;
         }
-    };
-
-    const getStatusColor = (status) => {
-        switch (status) {
-        case 'pending':
-            return 'text-yellow-600 bg-yellow-100';
-        case 'submitted':
-            return 'text-green-600 bg-green-100';
-        case 'overdue':
-            return 'text-red-600 bg-red-100';
-        default:
-            return 'text-gray-600 bg-gray-100';
-        }
-    };
-
-    const getGradeColor = (grade) => {
-        if (grade.startsWith('A')) return 'text-green-600 bg-green-100';
-        if (grade.startsWith('B')) return 'text-blue-600 bg-blue-100';
-        if (grade.startsWith('C')) return 'text-yellow-600 bg-yellow-100';
-        return 'text-red-600 bg-red-100';
-    };
-
-    const isOverdue = (dueDate) => {
-        return new Date(dueDate) < new Date();
-    };
-
-    const handleRequestReEvaluation = (submission) => {
-        setSelectedSubmission(submission);
-        setShowReEvalModal(true);
-    };
-
-    const handleSubmitReEvaluation = () => {
-        if (reEvalReason.trim() && selectedSubmission) {
-
-        // console.log('Re-evaluation request submitted:', {
-        //     submissionId: selectedSubmission.id,
-        //     reason: reEvalReason
-        // });
-        
-        setReEvalReason('');
-        setSelectedSubmission(null);
-        setShowReEvalModal(false);
-        
-
-        alert('Re-evaluation request submitted successfully!');
-        }
-    };
-
-    const handleCancelReEvaluation = () => {
-        setReEvalReason('');
-        setSelectedSubmission(null);
-        setShowReEvalModal(false);
-    };
-
-    const handleSubmitAssignment = (assignment) => {
-      setSelectedAssignment(assignment);
-      setShowSubmissionModal(true);
-    };
-
-    const handleFileUpload = (event) => {
-      const file = event.target.files?.[0];
-      if (file) {
-        setSubmissionForm({ file });
-      }
+        setFile(picked);
     };
 
     const handleSubmitSolution = async () => {
-        if (submissionForm.file && selectedAssignment) {
-          setUploading(true)
-          // console.log("Submitting solution to assignment")
+        if (!file || !selectedAssignment || uploading) return;
+        setUploading(true);
+        try {
+            const formData = new FormData();
+            formData.append("file", file);
+            formData.append("upload_preset", "gradely-submissions");
+            const { data: upload } = await axios.post(`${API}/upload/file`, formData);
 
-          const formData = new FormData();
-          formData.append('file', submissionForm.file);
-          formData.append('upload_preset', 'gradely-submissions'); 
+            await axios.post(`${API}/submission/submitSolution`, {
+                filename: file.name,
+                url: upload.secure_url,
+                publicId: upload.public_id,
+                assignmentId: selectedAssignment._id,
+                studentId: user.id
+            });
 
-          let pdfUrl = '', publicId = '';
-
-          try {
-              const uploadRes = await axios.post(`${import.meta.env.VITE_BACKEND_URL}/upload/file`, formData, {
-                headers: { 'Content-Type': 'multipart/form-data' }
-              });
-              pdfUrl = uploadRes.data.secure_url;
-              publicId = uploadRes.data.public_id;
-              console.log("Pdf uploaded successfully")
-
-          } catch (err) {
-              toast.error(err.response?.data?.error || 'Failed to upload PDF');
-              setUploading(false);
-              return;
-          }
-
-          try {
-            await axios.post(`${import.meta.env.VITE_BACKEND_URL}/submission/submitSolution`, {
-              filename: submissionForm.file.name,
-              url: pdfUrl,
-              publicId: publicId,
-              assignmentId: selectedAssignment._id,
-              studentId: user.id
-            })
-
-            setSubmissionForm({ file: null });
+            toast.success("Submission received");
             setSelectedAssignment(null);
-            setShowSubmissionModal(false);
+            setFile(null);
             await fetchCourse();
-            toast.success("Submission successful!");
-          }
-          catch(err) {
-            console.error("Error submitting solution: ", err);
-            toast.error(err.response?.data?.error || "Failed to submit solution. Please try again.");
-          }
-          finally {
-            setUploading(false)
-          }
+        } catch (err) {
+            toast.error(apiError(err, "Failed to submit. Please try again."));
+        } finally {
+            setUploading(false);
         }
-      };
+    };
 
-      const handleCancelSubmission = () => {
-        setSubmissionForm({ file: null });
-        setSelectedAssignment(null);
-        setShowSubmissionModal(false);
-      };
+    const closeReeval = () => {
+        setReevalTarget(null);
+        setReevalReason("");
+    };
 
-
-      const getSubmissionButtonText = (assignment) => {
-        if (assignment.status === 'submitted') {
-          return 'Resubmit';
-        } else if (assignment.status === 'pending' && isOverdue(assignment.dueDate)) {
-          return 'Submit Late';
-        } else {
-          return 'Submit';
+    const handleRequestReeval = async () => {
+        if (!reevalReason.trim() || !reevalTarget) return;
+        setRequestingReeval(true);
+        try {
+            await axios.post(`${API}/submission/requestReevaluation/${reevalTarget._id}`, { reason: reevalReason.trim() });
+            toast.success("Re-evaluation requested");
+            closeReeval();
+            await fetchCourse();
+        } catch (err) {
+            toast.error(apiError(err, "Unable to request re-evaluation"));
+        } finally {
+            setRequestingReeval(false);
         }
-      };
-
-    const getSubmissionButtonColor = (assignment) => {
-      if (assignment.status === 'submitted') {
-        return 'bg-orange-600 hover:bg-orange-700';
-      } else if (assignment.status === 'pending' && isOverdue(assignment.dueDate)) {
-        return 'bg-red-600 hover:bg-red-700';
-      } else {
-        return 'bg-blue-600 hover:bg-blue-700';
-      }
     };
 
-    //PDF Viewing Functionality
-    const handleViewPdf = (pdfUrl) => {
-      setSelectedPdfUrl(pdfUrl);
-      setShowPdfViewer(true);
-    };
-
-    const handleClosePdfViewer = () => {
-      setShowPdfViewer(false);
-      setSelectedPdfUrl('');
-    };
-
-    function PdfViewer({ pdfUrl }) {
-      return (
-        <iframe
-          src={pdfUrl}
-          title="PDF Viewer"
-          width="100%"
-          height="600px"
-          style={{ border: "none", borderRadius: "8px" }}
-        ></iframe>
-      );
+    if (!course) {
+        return <AppLayout backTo="/student" backLabel="All courses"><PageLoader label="Loading course..." /></AppLayout>;
     }
 
-    return (
-    <div className="min-h-screen bg-gray-50">
-      <Toaster />
-      {/* Header */}
-      <header className="bg-white shadow">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-4">
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-4">
-              <button
-                onClick={handleBack}
-                className="flex items-center gap-2 text-gray-600 hover:text-gray-900 transition-colors"
-              >
-                <ArrowLeft className="h-5 w-5" />
-                Back to Dashboard
-              </button>
-              <div className="h-6 w-px bg-gray-300"></div>
-              <div>
-                <h1 className="text-3xl font-bold text-gray-900">{courseData.name}</h1>
-                <p className="text-gray-600">Student View</p>
-              </div>
-            </div>
-            
-            {/* Mobile sidebar toggle */}
-            <button
-              onClick={() => setShowSidebar(!showSidebar)}
-              className="lg:hidden flex items-center gap-2 px-3 py-2 bg-gray-100 text-gray-700 rounded-lg hover:bg-gray-200 transition-colors"
-            >
-              <Menu className="h-5 w-5" />
-              Participants
-            </button>
-          </div>
-        </div>
-      </header>
-
-      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6">
-        <div className="flex gap-6">
-          {/* Main Content */}
-          <div className="flex-1">
-            {/* Tab Navigation */}
-            <div className="border-b border-gray-200 mb-6">
-              <nav className="-mb-px flex space-x-8 overflow-x-auto">
-                <button
-                  onClick={() => setActiveTab('assignments')}
-                  className={`${
-                    activeTab === 'assignments'
-                      ? 'border-blue-500 text-blue-600'
-                      : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
-                  } flex items-center gap-2 whitespace-nowrap py-4 px-1 border-b-2 font-medium text-sm`}
-                >
-                  <ClipboardList className="h-5 w-5" />
-                  All Assignments ({assignments.length})
-                </button>
-                <button
-                  onClick={() => setActiveTab('submissions')}
-                  className={`${
-                    activeTab === 'submissions'
-                      ? 'border-blue-500 text-blue-600'
-                      : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
-                  } flex items-center gap-2 whitespace-nowrap py-4 px-1 border-b-2 font-medium text-sm`}
-                >
-                  <Upload className="h-5 w-5" />
-                  My Submissions ({submissions.length})
-                </button>
-                <button
-                  onClick={() => setActiveTab('pending')}
-                  className={`${
-                    activeTab === 'pending'
-                      ? 'border-blue-500 text-blue-600'
-                      : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
-                  } flex items-center gap-2 whitespace-nowrap py-4 px-1 border-b-2 font-medium text-sm`}
-                >
-                  <Clock className="h-5 w-5" />
-                  Pending
-                </button>
-              </nav>
-            </div>
-
-            {/* Content */}
-            {activeTab === 'assignments' && (
-              <div>
-                <h2 className="text-2xl font-semibold text-gray-900 mb-6">All Course Assignments</h2>
-                <div className="space-y-4">
-                  {assignments.map((assignment) => (
-                    <div key={assignment._id} className="bg-white rounded-lg shadow p-6 hover:shadow-lg transition-shadow">
-                      <div className="flex items-start justify-between">
-                        <div className="flex-1">
-                          <div className="flex items-center gap-3 mb-2">
-                            <h3 className="text-lg font-semibold text-gray-900">{assignment.title}</h3>
-                            {getStatusIcon(assignment.status)}
-                            <span className={`inline-flex px-2 py-1 text-xs font-semibold rounded-full ${getStatusColor(assignment.status)}`}>
-                              {assignment.status.charAt(0).toUpperCase() + assignment.status.slice(1)}
-                            </span>
-                          </div>
-                          <p className="text-gray-600 mb-3">{assignment.description}</p>
-                          <div className="flex items-center gap-4 text-sm text-gray-500">
-                            <span className="flex items-center gap-1">
-                              <Calendar className="h-4 w-4" />
-                              Due: {new Date(assignment.dueDate).toLocaleDateString()}
-                            </span>
-                            <span className="flex items-center gap-1">
-                              <User className="h-4 w-4" />
-                              Uploaded by: Prof. {faculty ? faculty.name : 'N/A'}
-                            </span>
-                            <span>Max Points: {assignment.marks}</span>
-                          </div>
-                           <div className="flex items-center gap-4 mt-4">
-                            {assignment.url && (
-                              <button
-                                onClick={() => handleViewPdf(assignment.url)}
-                                className="flex items-center gap-2 px-3 py-1 bg-blue-100 text-blue-700 rounded-md hover:bg-blue-200 transition-colors text-sm"
-                              >
-                                <Eye className="h-4 w-4" />
-                                View PDF
-                              </button>
+    const renderAssignment = (assignment) => {
+        const overdue = assignment.status === "overdue";
+        const submitLabel = assignment.latest ? "Resubmit" : overdue ? "Submit late" : "Submit";
+        return (
+            <Card key={assignment._id} className="p-5">
+                <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
+                    <div className="min-w-0 flex-1">
+                        <div className="flex flex-wrap items-center gap-2">
+                            <h3 className="font-semibold text-slate-900">{assignment.title}</h3>
+                            <StatusBadge status={assignment.status} />
+                        </div>
+                        {assignment.description && <p className="mt-1 text-sm text-slate-600">{assignment.description}</p>}
+                        <div className="mt-3 flex flex-wrap items-center gap-x-4 gap-y-1 text-sm text-slate-500">
+                            <span className={`flex items-center gap-1.5 ${overdue ? "text-rose-600" : ""}`}><Calendar className="h-4 w-4" />{dueLabel(assignment.dueDate)}</span>
+                            <span>{assignment.marks} pts</span>
+                            {assignment.latest?.status === "graded" && (
+                                <span className="flex items-center gap-1.5">Score <GradeBadge grade={assignment.latest.grade} />{assignment.latest.marks}/{assignment.marks}</span>
                             )}
-                          </div>
-
-                           {/* {assignment.submittedFile && (
-                            <div className="flex items-center gap-2 text-sm text-green-600 mb-2">
-                              <FileText className="h-4 w-4" />
-                              <span>Submitted: {assignment.submittedFile}</span>
-                              <span className="text-gray-500">
-                                on {new Date(assignment.submittedDate).toLocaleDateString()}
-                              </span>
-                            </div>
-                          )} */}
-                        </div>
-                        {/* <div className="flex flex-col sm:flex-row gap-2 lg:ml-4">
-                          <button 
-                            onClick={() => handleSubmitAssignment(assignment)}
-                            className={`flex items-center gap-2 px-4 py-2 text-white rounded-lg transition-colors ${getSubmissionButtonColor(assignment)}`}
-                          >
-                            <Send className="h-4 w-4" />
-                            {getSubmissionButtonText(assignment)}
-                          </button>
-                        </div> */}
-                        <div className="flex flex-col sm:flex-row gap-2 lg:ml-4">
-                          {assignment.status === 'submitted' && (
-                            <button 
-                            onClick={() => handleSubmitAssignment(assignment)}
-                            className={`flex items-center gap-2 px-4 py-2 text-white rounded-lg transition-colors ${getSubmissionButtonColor(assignment)}`}
-                          >
-                            <Send className="h-4 w-4" />
-                            {getSubmissionButtonText(assignment)}
-                          </button>
-                          )}
-                          
-                          { assignment.status === 'pending' && (
-                            isOverdue(assignment.dueDate) ? (
-                              <button 
-                                onClick={() => handleSubmitAssignment(assignment)}
-                                className="ml-4 px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 transition-colors">
-                                Submit Late
-                              </button>
-                            ):
-                            (<button
-                              onClick={() => handleSubmitAssignment(assignment)}
-                              className="ml-4 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors">
-                                Submit
-                            </button>)
-                          )}
-                        </div>
-                        {/* {assignment.status === 'pending' && (
-                          <button className="ml-4 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors">
-                            Submit
-                          </button>
-                        )}
-                        {isOverdue(assignment.dueDate) && assignment.status === 'pending' && (
-                          <button className="ml-4 px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 transition-colors">
-                            Submit Late
-                          </button>
-                        )} */}
-                      </div>
-                      {isOverdue(assignment.dueDate) && assignment.status === 'pending' && (
-                        <div className="mt-3 p-3 bg-red-50 border border-red-200 rounded-lg">
-                          <p className="text-red-700 text-sm font-medium">This assignment is overdue!</p>
-                        </div>
-                      )}
-                    </div>
-                  ))}
-                </div>
-              </div>
-            )}
-
-            {activeTab === 'submissions' && (
-              <div>
-                <h2 className="text-2xl font-semibold text-gray-900 mb-6">Your Submissions</h2>
-                
-                {/* Graded Submissions */}
-                <div className="mb-8">
-                  <h3 className="text-lg font-semibold text-gray-900 mb-4 flex items-center gap-2">
-                    <CheckCircle className="h-5 w-5 text-green-500" />
-                    Graded Submissions
-                  </h3>
-                  <div className="space-y-4">
-                    {submissions.filter(s => s.status === 'graded').map((submission) => (
-                      <div key={submission._id} className="bg-white rounded-lg shadow p-6 hover:shadow-lg transition-shadow">
-                        <div className="flex items-start justify-between mb-4">
-                          <div className="flex-1">
-                            <div className="flex items-center gap-3 mb-2">
-                              <h4 className="text-lg font-semibold text-gray-900">{submission.assignment.title}</h4>
-                              <span className={`inline-flex px-2 py-1 text-xs font-semibold rounded-full ${getGradeColor(submission.grade)}`}>
-                                {submission.grade}
-                              </span>
-                            </div>
-                            <div className="flex items-center gap-4 text-sm text-gray-500 mb-3">
-                              <span className="flex items-center gap-1">
-                                <FileText className="h-4 w-4" />
-                                {submission.filename}
-                              </span>
-                              <span className="flex items-center gap-1">
-                                <Calendar className="h-4 w-4" />
-                                Submitted: {new Date(submission.submittedDate).toLocaleDateString()}
-                              </span>
-                              <span className="flex items-center gap-1">
-                                <User className="h-4 w-4" />
-                                Graded by: {submission?.gradedBy?.name}
-                              </span>
-                            </div>
-                            <div className="bg-gray-50 p-3 rounded-lg mb-3">
-                              <p className="text-sm text-gray-700 font-medium mb-1">Feedback:</p>
-                              <p className="text-sm text-gray-600">{submission.feedback}</p>
-                            </div>
-
-                            <div className="text-sm text-gray-500">
-                              <b>Grade:</b> {submission.grade}
-                            </div>
-                            
-                            <div className="text-sm text-gray-500">
-                              <b>Score:</b> {submission.marks} / {submission.assignment.marks} marks
-                            </div>
-                          </div>
-                          {submission.canRequestReEvaluation && (
-                            <button
-                              onClick={() => handleRequestReEvaluation(submission)}
-                              className="ml-4 flex items-center gap-2 px-4 py-2 bg-orange-600 text-white rounded-lg hover:bg-orange-700 transition-colors"
-                            >
-                              <RefreshCw className="h-4 w-4" />
-                              Request Re-evaluation
-                            </button>
-                          )}
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-
-                {/* Pending Submissions */}
-                <div>
-                  <h3 className="text-lg font-semibold text-gray-900 mb-4 flex items-center gap-2">
-                    <Clock className="h-5 w-5 text-yellow-500" />
-                    Pending Review
-                  </h3>
-                  <div className="space-y-4">
-                    {submissions.filter(s => s.status === 'pending').map((submission) => (
-                      <div key={submission._id} className="bg-white rounded-lg shadow p-6 hover:shadow-lg transition-shadow">
-                        <div className="flex items-start justify-between">
-                          <div className="flex-1">
-                            <div className="flex items-center gap-3 mb-2">
-                              <h4 className="text-lg font-semibold text-gray-900">{submission.assignment.title}</h4>
-                              <span className="inline-flex px-2 py-1 text-xs font-semibold rounded-full text-yellow-600 bg-yellow-100">
-                                Under Review
-                              </span>
-                            </div>
-                            <div className="flex items-center gap-4 text-sm text-gray-500">
-                              <span className="flex items-center gap-1 text-blue-600 cursor-pointer hover:underline"
-                                    onClick={()=>handleViewPdf(submission.url)}>
-                                <FileText className="h-4 w-4" />
-                                {submission.filename}
-                              </span>
-                              <span className="flex items-center gap-1">
-                                <Calendar className="h-4 w-4" />
-                                Submitted: {new Date(submission.submittedDate).toLocaleDateString()}
-                              </span>
-                              <span>Max Points: {submission.assignment.marks}</span>
-                            </div>
-                          </div>
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              </div>
-            )}
-
-            {activeTab === 'pending' && (
-              <div>
-                <h2 className="text-2xl font-semibold text-gray-900 mb-6">Pending Assignments</h2>
-                <div className="space-y-4">
-                  {pendingAssignments.map((assignment) => (
-                    <div key={assignment._id} className="bg-white rounded-lg shadow p-6 hover:shadow-lg transition-shadow">
-                      <div className="flex items-start justify-between mb-4">
-                        <div className="flex-1">
-                          <div className="flex items-center gap-3 mb-2">
-                            <h3 className="text-lg font-semibold text-gray-900">{assignment.title}</h3>
-                            {getStatusIcon(assignment.status)}
-                            <span className={`inline-flex px-2 py-1 text-xs font-semibold rounded-full ${getStatusColor(assignment.status)}`}>
-                              {assignment.status.charAt(0).toUpperCase() + assignment.status.slice(1)}
-                            </span>
-                          </div>
-                          <p className="text-gray-600 mb-3">{assignment.description}</p>
-                          <div className="flex items-center gap-4 text-sm text-gray-500">
-                            <span className="flex items-center gap-1">
-                              <Calendar className="h-4 w-4" />
-                              Due: {new Date(assignment.dueDate).toLocaleDateString()}
-                            </span>
-                            <span>Max Points: {assignment.marks}</span>
-                          </div>
-                        </div>
-                        <button 
-                          className={`ml-4 px-4 py-2 text-white rounded-lg transition-colors ${
-                            assignment.status === 'overdue' 
-                              ? 'bg-red-600 hover:bg-red-700' 
-                              : 'bg-blue-600 hover:bg-blue-700'
-                          }`}
-                        >
-                          {assignment.status === 'overdue' ? 'Submit Late' : 'Submit'}
-                        </button>
-                      </div>
-                      {assignment.status === 'overdue' && (
-                        <div className="mt-3 p-3 bg-red-50 border border-red-200 rounded-lg">
-                          <p className="text-red-700 text-sm font-medium">This assignment is overdue!</p>
-                        </div>
-                      )}
-                    </div>
-                  ))}
-                </div>
-              </div>
-            )}
-          </div>
-
-          {/* Sidebar - Desktop */}
-          <div className="hidden lg:block w-80 bg-white rounded-lg shadow p-6 h-fit sticky top-6">
-            <h3 className="text-lg font-semibold text-gray-900 mb-4">Course Participants</h3>
-            
-            {/* Faculty Section */}
-            <div className="mb-6">
-              <div className="flex items-center gap-2 mb-3">
-                <GraduationCap className="h-5 w-5 text-purple-600" />
-                <h4 className="font-medium text-gray-900">Faculty</h4>
-              </div>
-              {faculty && (
-                <div className="space-y-2">
-                    <div key={faculty._id} className="flex items-center gap-3 p-2 bg-purple-50 rounded-lg">
-                        <div className="w-8 h-8 bg-purple-600 rounded-full flex items-center justify-center text-white text-sm font-medium">
-                            {faculty.name.charAt(0)}
-                        </div>
-                        <div className="flex-1 min-w-0">
-                            <p className="text-sm font-medium text-gray-900 truncate">{faculty.name}</p>
-                            <p className="text-xs text-gray-500 truncate">{faculty.email}</p>
+                            {assignment.url && (
+                                <button type="button" onClick={() => setPdfUrl(assignment.url)} className="flex items-center gap-1.5 font-medium text-indigo-600 hover:text-indigo-700">
+                                    <Eye className="h-4 w-4" />View PDF
+                                </button>
+                            )}
                         </div>
                     </div>
-              </div>)}
-            </div>
-
-            {/* TAs Section */}
-            <div className="mb-6">
-              <div className="flex items-center gap-2 mb-3">
-                <BookOpen className="h-5 w-5 text-blue-600" />
-                <h4 className="font-medium text-gray-900">Teaching Assistants ({tas.length})</h4>
-              </div>
-              <div className="space-y-2 max-h-32 overflow-y-auto">
-                {tas.map((ta) => (
-                  <div key={ta._id} className="flex items-center gap-3 p-2 bg-blue-50 rounded-lg">
-                    <div className="w-8 h-8 bg-blue-600 rounded-full flex items-center justify-center text-white text-sm font-medium">
-                      {ta.name.charAt(0)}
-                    </div>
-                    <div className="flex-1 min-w-0">
-                      <p className="text-sm font-medium text-gray-900 truncate">{ta.name}</p>
-                      <p className="text-xs text-gray-500 truncate">{ta.email}</p>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </div>
-
-            {/* Students Section */}
-            <div>
-              <div className="flex items-center gap-2 mb-3">
-                <Users className="h-5 w-5 text-green-600" />
-                <h4 className="font-medium text-gray-900">Students ({students.length})</h4>
-              </div>
-              <div className="space-y-2 max-h-64 overflow-y-auto">
-                {students.map((student) => (
-                  <div key={student._id} className="flex items-center gap-3 p-2 bg-gray-50 rounded-lg hover:bg-gray-100 transition-colors">
-                    <div className="w-8 h-8 bg-gray-600 rounded-full flex items-center justify-center text-white text-sm font-medium">
-                      {student.name.charAt(0)}
-                    </div>
-                    <div className="flex-1 min-w-0">
-                      <p className="text-sm font-medium text-gray-900 truncate">{student.name}</p>
-                      <p className="text-xs text-gray-500 truncate">{student.email}</p>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </div>
-          </div>
-
-          {/* Mobile Sidebar */}
-          {showSidebar && (
-            <div className="lg:hidden fixed inset-0 z-50 bg-black bg-opacity-50" onClick={() => setShowSidebar(false)}>
-              <div className="absolute right-0 top-0 h-full w-80 bg-white shadow-xl p-6 overflow-y-auto" onClick={(e) => e.stopPropagation()}>
-                <div className="flex items-center justify-between mb-6">
-                  <h3 className="text-lg font-semibold text-gray-900">Course Participants</h3>
-                  <button
-                    onClick={() => setShowSidebar(false)}
-                    className="text-gray-400 hover:text-gray-600"
-                  >
-                    <X className="h-6 w-6" />
-                  </button>
-                </div>
-                
-                {/* Faculty Section */}
-                <div className="mb-6">
-                  <div className="flex items-center gap-2 mb-3">
-                    <GraduationCap className="h-5 w-5 text-purple-600" />
-                    <h4 className="font-medium text-gray-900">Faculty (1)</h4>
-                  </div>
-                  <div className="space-y-2">
-                    <div className="flex items-center gap-3 p-2 bg-purple-50 rounded-lg">
-                      <div className="w-8 h-8 bg-purple-600 rounded-full flex items-center justify-center text-white text-sm font-medium">
-                          {faculty.name.charAt(0)}
-                        </div>
-                        <div className="flex-1 min-w-0">
-                          <p className="text-sm font-medium text-gray-900 truncate">{faculty.name}</p>
-                          <p className="text-xs text-gray-500 truncate">{faculty.email}</p>
-                        </div>
-                    </div>
-                  </div>
-                </div>
-
-                {/* TAs Section */}
-                <div className="mb-6">
-                  <div className="flex items-center gap-2 mb-3">
-                    <BookOpen className="h-5 w-5 text-blue-600" />
-                    <h4 className="font-medium text-gray-900">Teaching Assistants ({tas.length})</h4>
-                  </div>
-                  <div className="space-y-2">
-                    {tas.map((ta) => (
-                      <div key={ta._id} className="flex items-center gap-3 p-2 bg-blue-50 rounded-lg">
-                        <div className="w-8 h-8 bg-blue-600 rounded-full flex items-center justify-center text-white text-sm font-medium">
-                          {ta.name.charAt(0)}
-                        </div>
-                        <div className="flex-1 min-w-0">
-                          <p className="text-sm font-medium text-gray-900 truncate">{ta.name}</p>
-                          <p className="text-xs text-gray-500 truncate">{ta.email}</p>
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-
-                {/* Students Section */}
-                <div>
-                  <div className="flex items-center gap-2 mb-3">
-                    <Users className="h-5 w-5 text-green-600" />
-                    <h4 className="font-medium text-gray-900">Students ({students.length})</h4>
-                  </div>
-                  <div className="space-y-2">
-                    {students.map((student) => (
-                      <div key={student._id} className="flex items-center gap-3 p-2 bg-gray-50 rounded-lg hover:bg-gray-100 transition-colors">
-                        <div className="w-8 h-8 bg-gray-600 rounded-full flex items-center justify-center text-white text-sm font-medium">
-                          {student.name.charAt(0)}
-                        </div>
-                        <div className="flex-1 min-w-0">
-                          <p className="text-sm font-medium text-gray-900 truncate">{student.name}</p>
-                          <p className="text-xs text-gray-500 truncate">{student.email}</p>
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              </div>
-            </div>
-          )}
-        </div>
-      </div>
-
-
-      {/* Assignment Submission Modal */}
-      {showSubmissionModal && selectedAssignment && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
-          <div className="bg-white rounded-lg shadow-xl max-w-md w-full mx-4 max-h-[90vh] overflow-y-auto">
-            {/* Modal Header */}
-            <div className="flex items-center justify-between p-6 border-b border-gray-200">
-              <h3 className="text-lg font-semibold text-gray-900">
-                {selectedAssignment.status === 'pending' ? 'Submit Assignment' : 'Resubmit Assignment'}
-              </h3>
-              <button
-                onClick={handleCancelSubmission}
-                className="text-gray-400 hover:text-gray-600 transition-colors"
-              >
-                <X className="h-6 w-6" />
-              </button>
-            </div>
-
-            {/* Modal Body */}
-            <div className="p-6 space-y-4">
-              {/* Assignment Details */}
-              <div className="bg-gray-50 p-4 rounded-lg">
-                <h4 className="font-medium text-gray-900 mb-2">{selectedAssignment.title}</h4>
-                <p className="text-sm text-gray-600 mb-3">{selectedAssignment.description}</p>
-                <div className="flex flex-wrap items-center gap-4 text-sm text-gray-500">
-                  <span className="flex items-center gap-1">
-                    <Calendar className="h-4 w-4" />
-                    Due: {new Date(selectedAssignment.dueDate).toLocaleDateString()}
-                  </span>
-                  <span>Max Points: {selectedAssignment.marks}</span>
-                </div>
-                {selectedAssignment.submittedFile && (
-                  <div className="mt-3 p-3 bg-blue-50 border border-blue-200 rounded-lg">
-                    <p className="text-sm text-blue-700">
-                      <strong>Previously submitted:</strong> {selectedAssignment.submittedFile}
-                    </p>
-                    <p className="text-xs text-blue-600 mt-1">
-                      Submitted on {new Date(selectedAssignment.submittedDate).toLocaleDateString()}
-                    </p>
-                  </div>
-                )}
-              </div>
-
-              {/* File Upload */}
-              <div>
-                <label htmlFor="submissionFile" className="block text-sm font-medium text-gray-700 mb-2">
-                  {selectedAssignment.status === 'submitted' ? 'Upload New Solution *' : 'Upload Solution *'}
-                </label>
-                <div className="relative">
-                  <input
-                    type="file"
-                    id="submissionFile"
-                    onChange={handleFileUpload}
-                    className="hidden"
-                    accept=".pdf"
-                  />
-                  <label
-                    htmlFor="submissionFile"
-                    className="flex items-center justify-center w-full px-3 py-2 border-2 border-dashed border-gray-300 rounded-lg cursor-pointer hover:border-blue-400 hover:bg-blue-50 transition-colors"
-                  >
-                    <div className="text-center">
-                      <Paperclip className="h-8 w-8 text-gray-400 mx-auto mb-2" />
-                      <p className="text-sm text-gray-600">
-                        {submissionForm.file ? submissionForm.file.name : 'Click to upload your solution'}
-                      </p>
-                      <p className="text-xs text-gray-500 mt-1">
-                        Please upload a PDF file of your solution.
-                      </p>
-                    </div>
-                  </label>
-                </div>
-                {submissionForm.file && (
-                  <div className="mt-2 flex items-center gap-2 text-sm text-green-600">
-                    <FileText className="h-4 w-4" />
-                    <span>File selected: {submissionForm.file.name}</span>
-                    <button
-                      onClick={() => setSubmissionForm({ file: null })}
-                      className="text-red-500 hover:text-red-700"
+                    <Button
+                        size="sm"
+                        variant={assignment.latest ? "secondary" : overdue ? "danger" : "primary"}
+                        onClick={() => openSubmit(assignment)}
+                        className="shrink-0"
                     >
-                      <X className="h-4 w-4" />
-                    </button>
-                  </div>
+                        <Send className="h-3.5 w-3.5" />
+                        {submitLabel}
+                    </Button>
+                </div>
+            </Card>
+        );
+    };
+
+    return (
+        <AppLayout
+            backTo="/student"
+            backLabel="All courses"
+            eyebrow="Course"
+            title={course.name}
+            subtitle={course.faculty?.name ? `Prof. ${course.faculty.name}` : undefined}
+        >
+            <div className="flex gap-6">
+                <div className="min-w-0 flex-1">
+                    <div className="mb-5">
+                        <Tabs
+                            active={activeTab}
+                            onChange={setActiveTab}
+                            tabs={[
+                                { id: "assignments", label: "Assignments", icon: ClipboardList, count: assignments.length },
+                                { id: "todo", label: "To do", icon: Clock, count: todo.length },
+                                { id: "submissions", label: "My submissions", icon: Upload, count: submissions.length }
+                            ]}
+                        />
+                    </div>
+
+                    {activeTab === "assignments" && (
+                        assignmentsWithStatus.length === 0
+                            ? <EmptyState icon={ClipboardList} title="No assignments yet" description="Your faculty hasn’t published any assignments in this course." />
+                            : <div className="space-y-3">{assignmentsWithStatus.map(renderAssignment)}</div>
+                    )}
+
+                    {activeTab === "todo" && (
+                        todo.length === 0
+                            ? <EmptyState icon={CheckCircle2} title="All done!" description="You’ve submitted every assignment in this course." />
+                            : <div className="space-y-3">{todo.map(renderAssignment)}</div>
+                    )}
+
+                    {activeTab === "submissions" && (
+                        submissions.length === 0 ? (
+                            <EmptyState icon={Upload} title="No submissions yet" description="Submit an assignment to see it here." />
+                        ) : (
+                            <div className="space-y-8">
+                                <section>
+                                    <h2 className="mb-3 flex items-center gap-2 text-base font-semibold text-slate-900"><CheckCircle2 className="h-5 w-5 text-emerald-500" />Graded</h2>
+                                    {graded.length === 0 ? (
+                                        <p className="rounded-lg bg-white px-4 py-3 text-sm text-slate-500 ring-1 ring-slate-200">No graded submissions yet.</p>
+                                    ) : (
+                                        <div className="space-y-3">
+                                            {graded.map(submission => (
+                                                <Card key={submission._id} className="p-5">
+                                                    <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
+                                                        <div className="min-w-0 flex-1">
+                                                            <div className="flex flex-wrap items-center gap-2">
+                                                                <h3 className="font-semibold text-slate-900">{submission.assignment?.title}</h3>
+                                                                <GradeBadge grade={submission.grade} />
+                                                                <span className="text-sm font-medium text-slate-700">{submission.marks}/{submission.assignment?.marks}</span>
+                                                                {reevalBadge(submission)}
+                                                            </div>
+                                                            <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-sm text-slate-500">
+                                                                <a href={submission.url} target="_blank" rel="noopener noreferrer" className="flex items-center gap-1.5 text-indigo-600 hover:underline"><FileText className="h-4 w-4" />{submission.filename}</a>
+                                                                <span className="flex items-center gap-1.5"><Calendar className="h-4 w-4" />Submitted {formatDate(submission.submittedDate)}</span>
+                                                                <span className="flex items-center gap-1.5"><User className="h-4 w-4" />Graded by {submission.gradedBy?.name || "—"}</span>
+                                                            </div>
+                                                            {submission.feedback && (
+                                                                <div className="mt-3 rounded-lg bg-slate-50 px-4 py-3 text-sm text-slate-700">
+                                                                    <p className="mb-1 text-xs font-semibold uppercase tracking-wide text-slate-500">Feedback</p>
+                                                                    {submission.feedback}
+                                                                </div>
+                                                            )}
+                                                            {submission.reevalStatus === "rejected" && submission.reevalResponse && (
+                                                                <div className="mt-3 rounded-lg bg-slate-50 px-4 py-3 text-sm text-slate-700">
+                                                                    <p className="mb-1 text-xs font-semibold uppercase tracking-wide text-slate-500">Re-evaluation response</p>
+                                                                    {submission.reevalResponse}
+                                                                </div>
+                                                            )}
+                                                        </div>
+                                                        {submission.reevalStatus !== "pending" && (
+                                                            <Button size="sm" variant="secondary" className="shrink-0" onClick={() => setReevalTarget(submission)}>
+                                                                <RefreshCw className="h-3.5 w-3.5" />
+                                                                Request re-evaluation
+                                                            </Button>
+                                                        )}
+                                                    </div>
+                                                </Card>
+                                            ))}
+                                        </div>
+                                    )}
+                                </section>
+
+                                <section>
+                                    <h2 className="mb-3 flex items-center gap-2 text-base font-semibold text-slate-900"><Clock className="h-5 w-5 text-amber-500" />Awaiting grade</h2>
+                                    {awaiting.length === 0 ? (
+                                        <p className="rounded-lg bg-white px-4 py-3 text-sm text-slate-500 ring-1 ring-slate-200">Nothing waiting on a grade.</p>
+                                    ) : (
+                                        <div className="space-y-3">
+                                            {awaiting.map(submission => (
+                                                <Card key={submission._id} className="flex flex-col gap-2 p-5 sm:flex-row sm:items-center sm:justify-between">
+                                                    <div className="min-w-0">
+                                                        <h3 className="font-semibold text-slate-900">{submission.assignment?.title}</h3>
+                                                        <div className="mt-1 flex flex-wrap gap-x-4 gap-y-1 text-sm text-slate-500">
+                                                            <button type="button" onClick={() => setPdfUrl(submission.url)} className="flex items-center gap-1.5 text-indigo-600 hover:underline"><FileText className="h-4 w-4" />{submission.filename}</button>
+                                                            <span className="flex items-center gap-1.5"><Calendar className="h-4 w-4" />Submitted {formatDate(submission.submittedDate)}</span>
+                                                        </div>
+                                                    </div>
+                                                    {submission.status === "overdue" ? <Badge tone="orange">Submitted late</Badge> : <Badge tone="blue">Under review</Badge>}
+                                                </Card>
+                                            ))}
+                                        </div>
+                                    )}
+                                </section>
+                            </div>
+                        )
+                    )}
+                </div>
+
+                <Participants faculty={course.faculty} tas={course.tas || []} students={course.students || []} />
+            </div>
+
+            <PdfModal url={pdfUrl} title="Document" onClose={() => setPdfUrl("")} />
+
+            <Modal
+                open={Boolean(selectedAssignment)}
+                onClose={closeSubmit}
+                title={selectedAssignment?.latest ? "Resubmit assignment" : "Submit assignment"}
+                description={selectedAssignment?.title}
+                footer={
+                    <>
+                        <Button variant="secondary" onClick={closeSubmit} disabled={uploading}>Cancel</Button>
+                        <Button onClick={handleSubmitSolution} loading={uploading} disabled={!file}>
+                            {uploading ? "Uploading..." : selectedAssignment?.latest ? "Resubmit" : "Submit"}
+                        </Button>
+                    </>
+                }
+            >
+                {selectedAssignment && (
+                    <div className="space-y-4">
+                        <div className="flex flex-wrap gap-x-4 gap-y-1 rounded-lg bg-slate-50 px-4 py-3 text-sm text-slate-600">
+                            <span className="flex items-center gap-1.5"><Calendar className="h-4 w-4" />{dueLabel(selectedAssignment.dueDate)}</span>
+                            <span>{selectedAssignment.marks} pts</span>
+                        </div>
+
+                        <Field label="Your solution" required hint="PDF only · up to 15 MB">
+                            {file ? (
+                                <div className="flex items-center justify-between gap-3 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-800">
+                                    <span className="flex min-w-0 items-center gap-2"><FileText className="h-4 w-4 shrink-0" /><span className="truncate">{file.name}</span></span>
+                                    <button type="button" onClick={() => setFile(null)} disabled={uploading} className="text-emerald-700 hover:text-rose-600" aria-label="Remove file">
+                                        <Trash2 className="h-4 w-4" />
+                                    </button>
+                                </div>
+                            ) : (
+                                <label htmlFor="submissionFile" className="flex cursor-pointer flex-col items-center gap-1 rounded-lg border-2 border-dashed border-slate-200 px-3 py-8 text-center transition hover:border-indigo-300 hover:bg-indigo-50/40">
+                                    <Paperclip className="h-6 w-6 text-slate-400" />
+                                    <span className="text-sm font-medium text-slate-700">Click to choose a PDF</span>
+                                </label>
+                            )}
+                            <input id="submissionFile" type="file" accept="application/pdf,.pdf" onChange={handleFileSelect} className="hidden" />
+                        </Field>
+
+                        {selectedAssignment.latest && (
+                            <p className="flex gap-2 rounded-lg bg-amber-50 px-3 py-2 text-sm text-amber-800">
+                                <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
+                                Your latest submission will be the one that gets graded.
+                            </p>
+                        )}
+                        {!selectedAssignment.latest && isPastDue(selectedAssignment.dueDate) && (
+                            <p className="flex gap-2 rounded-lg bg-rose-50 px-3 py-2 text-sm text-rose-700">
+                                <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
+                                This assignment is past due. It will be marked as a late submission.
+                            </p>
+                        )}
+                    </div>
                 )}
-              </div>
+            </Modal>
 
-              {/* Warning for late submission */}
-              {selectedAssignment.status === 'pending' && isOverdue(selectedAssignment.dueDate) && (
-                <div className="bg-red-50 p-3 rounded-lg border border-red-200">
-                  <p className="text-sm text-red-700 font-medium">
-                    ⚠️ This assignment is past due. Late submissions may be penalized.
-                  </p>
-                </div>
-              )}
-
-              {/* Info for resubmission */}
-              {selectedAssignment.status === 'submitted' && (
-                <div className="bg-orange-50 p-3 rounded-lg border border-orange-200">
-                  <p className="text-sm text-orange-700">
-                    <strong>Note:</strong> Resubmitting will replace your previous submission. 
-                    Make sure this is the final version you want to submit.
-                  </p>
-                </div>
-              )}
-            </div>
-
-            {/* Modal Footer */}
-            <div className="flex items-center justify-end gap-3 p-6 border-t border-gray-200">
-              <button
-                onClick={handleCancelSubmission}
-                className="px-4 py-2 text-gray-700 bg-gray-100 rounded-lg hover:bg-gray-200 transition-colors"
-              >
-                Cancel
-              </button>
-              <button
-                onClick={handleSubmitSolution}
-                disabled={!submissionForm.file}
-                className={`px-4 py-2 text-white rounded-lg transition-colors disabled:bg-gray-300 disabled:cursor-not-allowed ${getSubmissionButtonColor(selectedAssignment)}`}
-              >
-                {uploading ? (  <span className="inline-block w-5 h-5 border-2 border-white border-t-blue-500 rounded-full animate-spin"></span>) :
-                 (selectedAssignment.status === 'submitted' ? 'Resubmit' : 'Submit Solution')}
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Re-evaluation Request Modal */}
-      {showReEvalModal && selectedSubmission && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
-          <div className="bg-white rounded-lg shadow-xl max-w-md w-full mx-4">
-            {/* Modal Header */}
-            <div className="flex items-center justify-between p-6 border-b border-gray-200">
-              <h3 className="text-lg font-semibold text-gray-900">Request Re-evaluation</h3>
-              <button
-                onClick={handleCancelReEvaluation}
-                className="text-gray-400 hover:text-gray-600 transition-colors"
-              >
-                <X className="h-6 w-6" />
-              </button>
-            </div>
-
-            {/* Modal Body */}
-            <div className="p-6 space-y-4">
-              <div className="bg-gray-50 p-4 rounded-lg">
-                <h4 className="font-medium text-gray-900 mb-2">{selectedSubmission.assignmentName}</h4>
-                <div className="flex items-center gap-4 text-sm text-gray-600">
-                  <span>Current Grade: <span className={`inline-flex px-2 py-1 text-xs font-semibold rounded-full ${getGradeColor(selectedSubmission.grade)}`}>
-                    {selectedSubmission.grade}
-                  </span></span>
-                  <span>Max Points: {selectedSubmission.maxPoints}</span>
-                </div>
-              </div>
-
-              <div>
-                <label htmlFor="reEvalReason" className="block text-sm font-medium text-gray-700 mb-2">
-                  Reason for Re-evaluation Request *
-                </label>
-                <textarea
-                  id="reEvalReason"
-                  value={reEvalReason}
-                  onChange={(e) => setReEvalReason(e.target.value)}
-                  placeholder="Please explain why you believe your submission deserves re-evaluation..."
-                  rows={4}
-                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-colors"
-                  autoFocus
-                />
-              </div>
-
-              <div className="bg-blue-50 p-3 rounded-lg">
-                <p className="text-sm text-blue-700">
-                  Your request will be reviewed by the teaching assistant who graded your submission. 
-                  Please provide specific reasons for your request.
-                </p>
-              </div>
-            </div>
-
-            {/* Modal Footer */}
-            <div className="flex items-center justify-end gap-3 p-6 border-t border-gray-200">
-              <button
-                onClick={handleCancelReEvaluation}
-                className="px-4 py-2 text-gray-700 bg-gray-100 rounded-lg hover:bg-gray-200 transition-colors"
-              >
-                Cancel
-              </button>
-              <button
-                onClick={handleSubmitReEvaluation}
-                disabled={!reEvalReason.trim()}
-                className="px-4 py-2 bg-orange-600 text-white rounded-lg hover:bg-orange-700 disabled:bg-gray-300 disabled:cursor-not-allowed transition-colors"
-              >
-                Submit Request
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-       {showPdfViewer && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
-          <div className="bg-white rounded-lg shadow-xl max-w-4xl w-full mx-4 max-h-[90vh] overflow-hidden">
-            {/* Modal Header */}
-            <div className="flex items-center justify-between p-6 border-b border-gray-200">
-              <h3 className="text-lg font-semibold text-gray-900">Assignment PDF</h3>
-              <button
-                onClick={handleClosePdfViewer}
-                className="text-gray-400 hover:text-gray-600 transition-colors"
-              >
-                <X className="h-6 w-6" />
-              </button>
-            </div>
-
-            {/* Modal Body */}
-            <div className="p-6">
-              <PdfViewer pdfUrl={selectedPdfUrl} />
-            </div>
-          </div>
-        </div>
-      )}
-    </div>
-    )
+            <Modal
+                open={Boolean(reevalTarget)}
+                onClose={closeReeval}
+                title="Request re-evaluation"
+                description={reevalTarget ? `${reevalTarget.assignment?.title} · current grade ${reevalTarget.grade} (${reevalTarget.marks}/${reevalTarget.assignment?.marks})` : undefined}
+                footer={
+                    <>
+                        <Button variant="secondary" onClick={closeReeval}>Cancel</Button>
+                        <Button onClick={handleRequestReeval} loading={requestingReeval} disabled={!reevalReason.trim()}>Send request</Button>
+                    </>
+                }
+            >
+                <Field label="Why should this be re-evaluated?" htmlFor="reevalReason" required hint={`Be specific about which parts you think were marked incorrectly. ${reevalReason.length}/2000`}>
+                    <textarea id="reevalReason" rows={5} maxLength={2000} value={reevalReason} onChange={e => setReevalReason(e.target.value)} className={inputClass} autoFocus />
+                </Field>
+            </Modal>
+        </AppLayout>
+    );
 }

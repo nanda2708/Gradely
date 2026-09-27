@@ -27,7 +27,15 @@ const solutionSchema = new Schema(
             default: "TA"
         },
         checkedDate: { type: Date, default: null },
-        reevalRequested: { type: Boolean, default: false }
+        reevalRequested: { type: Boolean, default: false },
+        reevalStatus: {
+            type: String,
+            enum: ["none", "pending", "resolved", "rejected"],
+            default: "none"
+        },
+        reevalReason: { type: String, default: "", maxlength: 2000 },
+        reevalResponse: { type: String, default: "", maxlength: 2000 },
+        reevalRequestedAt: { type: Date, default: null }
     },
     {
         collection: "solutions",

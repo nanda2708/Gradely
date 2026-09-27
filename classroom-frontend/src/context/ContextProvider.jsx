@@ -1,11 +1,11 @@
 import { createContext, useState, useEffect, useCallback } from "react";
 import { onAuthStateChanged, signOut } from "firebase/auth";
 import { auth } from "../firebase/firebaseConfig";
+import { API as backendUrl } from "../lib/api";
 
 // eslint-disable-next-line react-refresh/only-export-components
 export const UserContext = createContext();
 
-const backendUrl = import.meta.env.VITE_BACKEND_URL?.replace(/\/$/, "");
 
 const getAuthenticatedGradelyUser = async (firebaseUser) => {
     if (!backendUrl) throw new Error("VITE_BACKEND_URL is not configured");
@@ -63,6 +63,8 @@ const normalizeGradelyUser = (data, firebaseUser) => {
 export const ContextProvider = ({ children }) => {
     const [user, setUser] = useState(null);
     const [loading, setLoading] = useState(true);
+    // True once the first Firebase auth state has been resolved.
+    const [initialized, setInitialized] = useState(false);
 
     useEffect(() => {
         let active = true;
@@ -73,6 +75,7 @@ export const ContextProvider = ({ children }) => {
                 setUser(null);
                 localStorage.removeItem("user");
                 setLoading(false);
+                setInitialized(true);
                 return;
             }
 
@@ -86,6 +89,7 @@ export const ContextProvider = ({ children }) => {
                     setUser(null);
                     localStorage.removeItem("user");
                     setLoading(false);
+                    setInitialized(true);
                     return;
                 }
 
@@ -108,7 +112,10 @@ export const ContextProvider = ({ children }) => {
                     await signOut(auth).catch(() => {});
                 }
             } finally {
-                if (active) setLoading(false);
+                if (active) {
+                    setLoading(false);
+                    setInitialized(true);
+                }
             }
         });
 
@@ -134,7 +141,7 @@ export const ContextProvider = ({ children }) => {
     }, []);
 
     return (
-        <UserContext.Provider value={{ user, login, logout, loading }}>
+        <UserContext.Provider value={{ user, login, logout, loading, initialized }}>
             {children}
         </UserContext.Provider>
     );

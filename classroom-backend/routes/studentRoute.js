@@ -3,16 +3,19 @@ import Student from "../models/student.js";
 import Course from "../models/courses.js";
 import Assignment from "../models/assignment.js";
 import Solution from "../models/solutions.js";
-import { requireMatchingEmail, requireRole } from "../middleware/roleMiddleware.js";
+import { buildAccountPayload, requireMatchingEmail, requireRole } from "../middleware/roleMiddleware.js";
 
 const studentRouter = Router();
 const idEquals = (a, b) => a?.toString() === b?.toString();
 
 studentRouter.post("/createStudent", requireMatchingEmail("body"), async (req, res) => {
     try {
-        const student = await Student.create(req.body);
+        const student = await Student.create(buildAccountPayload(req));
         return res.status(201).json(student);
     } catch (err) {
+        if (err?.code === 11000) {
+            return res.status(409).json({ error: "An account with this email already exists" });
+        }
         console.error("Error creating student in DB:", err);
         return res.status(500).json({ error: "Internal Server Error" });
     }

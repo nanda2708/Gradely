@@ -11,12 +11,21 @@ import {
 } from "firebase/auth";
 import { auth, db, provider } from "../firebase/firebaseConfig";
 import { setDoc, doc, getDoc, deleteDoc } from "firebase/firestore";
-import { useNavigate } from "react-router-dom";
-import { GraduationCap, School, Users, Mail, Lock, User, Phone, ArrowRight, Loader2 } from "lucide-react";
-import toast, { Toaster } from "react-hot-toast";
+import { Link, useNavigate } from "react-router-dom";
+import { ArrowRight, BookOpen, GraduationCap, Lock, Mail, MailCheck, Phone, School, User } from "lucide-react";
+import toast from "react-hot-toast";
 import axios from "axios";
+import AuthLayout, { Divider, GoogleButton } from "../components/AuthLayout";
+import { Button, Field, inputClass } from "../components/ui";
+import { API } from "../lib/api";
 
-const createMongoUser = async (role, email, name, phoneNumber = "", emailVerified = true, phoneVerified = false) => {
+const roleOptions = [
+    { value: "student", label: "Student", icon: GraduationCap, text: "Submit work & track grades" },
+    { value: "faculty", label: "Faculty", icon: School, text: "Run courses & assignments" },
+    { value: "ta", label: "TA", icon: BookOpen, text: "Grade & give feedback" }
+];
+
+const createMongoUser = async (role, email, name, phoneNumber = "") => {
     const endpoint = { faculty: "/faculty/createFaculty", ta: "/ta/createTA", student: "/student/createStudent" }[role];
     if (!endpoint) throw new Error("Please select a valid role");
 
@@ -25,23 +34,22 @@ const createMongoUser = async (role, email, name, phoneNumber = "", emailVerifie
         throw new Error("Your Firebase session expired. Please start signup again.");
     }
 
-    const token = await currentUser.getIdToken();
-    const response = await axios.post(`${import.meta.env.VITE_BACKEND_URL}${endpoint}`, {
-        email: email.toLowerCase().trim(),
-        name: name.trim(),
-        phoneNumber: phoneNumber.trim() || undefined,
-        emailVerified,
-        phoneVerified
-    }, {
-        headers: {
-            Authorization: `Bearer ${token}`
-        }
-    });
-
-    if (response.status < 200 || response.status >= 300 || response.data?.error) {
-        throw new Error(response.data?.error || "Unable to create the Gradely account");
+    // Force-refresh so the backend sees the latest verified email/phone claims.
+    const token = await currentUser.getIdToken(true);
+    try {
+        const response = await axios.post(`${API}${endpoint}`, {
+            email: email.toLowerCase().trim(),
+            name: name.trim(),
+            phoneNumber: phoneNumber.trim() || undefined
+        }, {
+            headers: { Authorization: `Bearer ${token}` }
+        });
+        return response.data;
+    } catch (err) {
+        // The session-restore flow may already have provisioned this account.
+        if (err.response?.status === 409) return null;
+        throw err;
     }
-    return response.data;
 };
 
 export default function SignUp() {
@@ -75,7 +83,7 @@ export default function SignUp() {
 
         const normalizedEmail = firebaseUser.email.toLowerCase().trim();
         try {
-            await createMongoUser(role, normalizedEmail, name, phoneNumber, true, phoneVerified);
+            await createMongoUser(role, normalizedEmail, name, phoneNumber);
             await setDoc(doc(db, "users", normalizedEmail), {
                 email: normalizedEmail,
                 name: name.trim(),
@@ -227,7 +235,7 @@ export default function SignUp() {
             });
 
             try {
-                await createMongoUser(role, normalizedEmail, displayName, "", firebaseUser.emailVerified, false);
+                await createMongoUser(role, normalizedEmail, displayName);
             } catch (err) {
                 await deleteDoc(userRef).catch(() => {});
                 await deleteUser(firebaseUser).catch(() => signOut(auth));
@@ -246,77 +254,123 @@ export default function SignUp() {
         }
     };
 
+    const checkEmailVerified = async () => {
+        try {
+            await auth.currentUser?.reload();
+            if (!auth.currentUser?.emailVerified) {
+                toast.error("Email is not verified yet. Open the link in your inbox first.");
+                return;
+            }
+            toast.success("Email verified. You can finish signup now.");
+        } catch (err) {
+            toast.error(err.message || "Unable to check verification status.");
+        }
+    };
+
     if (verificationStage === "verify") {
         return (
-            <div className="min-h-screen flex items-center justify-center p-4 bg-gradient-to-br from-blue-50 to-indigo-50">
-                <Toaster />
-                <div className="bg-white rounded-2xl shadow-xl w-full max-w-md p-8">
-                    <h1 className="text-2xl font-bold text-gray-900 mb-2">Verify your account</h1>
-                    <p className="text-gray-600 mb-6">We sent a verification email to <b>{email}</b>. Verify it, then optionally verify your phone.</p>
-
-                    <div className="space-y-4">
-                        <button onClick={async () => {
-                            try {
-                                await auth.currentUser?.reload();
-                                if (!auth.currentUser?.emailVerified) {
-                                    toast.error("Email is not verified yet. Open the email link first.");
-                                    return;
-                                }
-                                toast.success("Email verified. You can finish signup now.");
-                            } catch (err) {
-                                toast.error(err.message || "Unable to check verification status.");
-                            }
-                        }} className="w-full bg-blue-600 text-white py-2 rounded-lg hover:bg-blue-700">
-                            Check Email Verification
-                        </button>
-
-                        <button onClick={resendEmail} className="w-full border border-gray-300 py-2 rounded-lg hover:bg-gray-50">Resend Verification Email</button>
-
-                        <div className="border-t pt-5">
-                            <label className="block text-sm font-medium text-gray-700 mb-2">Phone number (optional)</label>
-                            <div className="relative"><Phone className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 h-5 w-5" /><input value={phoneNumber} onChange={(e) => setPhoneNumber(e.target.value)} placeholder="+91..." className="pl-10 w-full py-2 border border-gray-300 rounded-lg" /></div>
-                            <div id="phone-recaptcha" className="mt-3" />
-
-                            {!verificationId ? (
-                                <button onClick={startPhoneVerification} disabled={isPhoneLoading || !phoneNumber.trim()} className="mt-3 w-full border border-blue-300 text-blue-700 py-2 rounded-lg disabled:opacity-50">
-                                    {isPhoneLoading ? "Sending code..." : "Send Phone Code"}
-                                </button>
-                            ) : (
-                                <div className="mt-3 space-y-3">
-                                    <input value={verificationCode} onChange={(e) => setVerificationCode(e.target.value)} placeholder="Verification code" inputMode="numeric" className="w-full py-2 border border-gray-300 rounded-lg" />
-                                    <button onClick={verifyPhone} disabled={isPhoneLoading} className="w-full bg-green-600 text-white py-2 rounded-lg disabled:opacity-50">{isPhoneLoading ? "Verifying..." : "Verify Phone & Finish"}</button>
-                                </div>
-                            )}
-                        </div>
-
-                        <button onClick={continueWithoutPhone} disabled={isLoading} className="w-full bg-gray-900 text-white py-2 rounded-lg disabled:opacity-50">
-                            {isLoading ? "Finishing..." : "Continue Without Phone"}
-                        </button>
-                    </div>
+            <AuthLayout
+                title="Verify your email"
+                subtitle={<>We sent a verification link to <span className="font-medium text-slate-900">{email}</span>. Open it, then finish your signup below.</>}
+            >
+                <div className="mb-6 flex items-center gap-3 rounded-xl bg-indigo-50 p-4 text-sm text-indigo-900">
+                    <MailCheck className="h-5 w-5 shrink-0 text-indigo-600" />
+                    Can’t find it? Check your spam folder or resend the email.
                 </div>
-            </div>
+                <div className="grid grid-cols-2 gap-2">
+                    <Button variant="soft" onClick={checkEmailVerified}>I’ve verified</Button>
+                    <Button variant="secondary" onClick={resendEmail}>Resend email</Button>
+                </div>
+
+                <div className="mt-8 rounded-xl border border-slate-200 p-5">
+                    <Field label="Phone number" htmlFor="phone" hint="Optional. Include your country code, e.g. +91 98765 43210.">
+                        <div className="relative">
+                            <Phone className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+                            <input id="phone" value={phoneNumber} onChange={(e) => setPhoneNumber(e.target.value)} placeholder="+91..." className={`${inputClass} h-11 pl-10`} />
+                        </div>
+                    </Field>
+                    <div id="phone-recaptcha" className="mt-3" />
+                    {!verificationId ? (
+                        <Button variant="secondary" className="mt-3 w-full" onClick={startPhoneVerification} loading={isPhoneLoading} disabled={!phoneNumber.trim()}>
+                            {isPhoneLoading ? "Sending code..." : "Send verification code"}
+                        </Button>
+                    ) : (
+                        <div className="mt-3 space-y-3">
+                            <input value={verificationCode} onChange={(e) => setVerificationCode(e.target.value)} placeholder="6-digit code" inputMode="numeric" className={`${inputClass} h-11 tracking-widest`} />
+                            <Button variant="success" className="w-full" onClick={verifyPhone} loading={isPhoneLoading}>
+                                {isPhoneLoading ? "Verifying..." : "Verify phone & finish"}
+                            </Button>
+                        </div>
+                    )}
+                </div>
+
+                <Button size="lg" className="mt-6 w-full" onClick={continueWithoutPhone} loading={isLoading}>
+                    {isLoading ? "Finishing..." : <>Finish without phone <ArrowRight className="h-4 w-4" /></>}
+                </Button>
+            </AuthLayout>
         );
     }
 
+    const busy = isLoading || isGoogleLoading;
+
     return (
-        <div className="min-h-screen flex items-center justify-center p-4 bg-gradient-to-br from-blue-50 to-indigo-50">
-            <Toaster />
-            <div className="bg-white rounded-2xl shadow-xl w-full max-w-md p-5">
-                <div className="text-center mb-8"><h1 className="text-3xl font-bold text-gray-900 mb-2">Create Account</h1><p className="text-gray-600">Join our grading platform today</p></div>
+        <AuthLayout
+            title="Create your account"
+            subtitle="Choose your role to get started with Gradely."
+            footer={<>Already have an account? <Link to="/login" className="font-medium text-indigo-600 hover:text-indigo-700">Sign in</Link></>}
+        >
+            <fieldset>
+                <legend className="mb-2 text-sm font-medium text-slate-700">I am a</legend>
+                <div className="grid grid-cols-3 gap-2">
+                    {roleOptions.map(({ value, label, icon: Icon, text }) => {
+                        const selected = role === value;
+                        return (
+                            <button
+                                key={value}
+                                type="button"
+                                onClick={() => setRole(value)}
+                                aria-pressed={selected}
+                                className={`flex flex-col items-center gap-1 rounded-xl border p-3 text-center transition-colors ${
+                                    selected ? "border-indigo-500 bg-indigo-50 ring-1 ring-indigo-500" : "border-slate-200 hover:border-slate-300 hover:bg-slate-50"
+                                }`}
+                            >
+                                <Icon className={`h-5 w-5 ${selected ? "text-indigo-600" : "text-slate-400"}`} />
+                                <span className={`text-sm font-semibold ${selected ? "text-indigo-700" : "text-slate-700"}`}>{label}</span>
+                                <span className="hidden text-[11px] leading-tight text-slate-500 sm:block">{text}</span>
+                            </button>
+                        );
+                    })}
+                </div>
+            </fieldset>
 
-                <form onSubmit={handleSubmit} className="space-y-6">
-                    <div className="space-y-4">
-                        <div><label className="block text-sm font-medium text-gray-700 mb-1">Name</label><div className="relative"><User className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 h-5 w-5" /><input type="text" placeholder="Enter your name" value={name} onChange={(e) => setName(e.target.value)} className="pl-10 w-full py-2 border border-gray-300 rounded-lg" required /></div></div>
-                        <div><label className="block text-sm font-medium text-gray-700 mb-1">Email</label><div className="relative"><Mail className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 h-5 w-5" /><input type="email" placeholder="Enter your email" value={email} onChange={(e) => setEmail(e.target.value)} className="pl-10 w-full py-2 border border-gray-300 rounded-lg" required /></div></div>
-                        <div><label className="block text-sm font-medium text-gray-700 mb-1">Password</label><div className="relative"><Lock className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 h-5 w-5" /><input type="password" placeholder="Create a password" value={password} onChange={(e) => setPassword(e.target.value)} className="pl-10 w-full py-2 border border-gray-300 rounded-lg" minLength={6} required /></div></div>
-                        <div><label className="block text-sm font-medium text-gray-700 mb-1">Register as</label><div className="relative"><select value={role} onChange={(e) => setRole(e.target.value)} className="w-full py-2 pl-10 border border-gray-300 rounded-lg" required><option value="">Select your role</option><option value="student">Student</option><option value="faculty">Faculty</option><option value="ta">Teaching Assistant</option></select>{role === "student" && <GraduationCap className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 h-5 w-5" />}{role === "faculty" && <School className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 h-5 w-5" />}{role === "ta" && <Users className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 h-5 w-5" />}{!role && <Users className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 h-5 w-5" />}</div></div>
-                    </div>
-                    <button type="submit" disabled={isLoading || isGoogleLoading} className="w-full bg-blue-600 text-white py-2 px-4 rounded-lg hover:bg-blue-700 flex items-center justify-center gap-2">{isLoading ? <><Loader2 className="h-5 w-5 animate-spin" />Signing Up...</> : <>Sign Up <ArrowRight className="h-5 w-5" /></>}</button>
-                </form>
-
-                <div className="mt-6"><div className="relative"><div className="absolute inset-0 flex items-center"><div className="w-full border-t border-gray-300" /></div><div className="relative flex justify-center text-sm"><span className="px-2 bg-white text-gray-500">OR</span></div></div><button onClick={signUpWithGoogle} disabled={isLoading || isGoogleLoading} className="mt-4 w-full flex items-center justify-center gap-3 px-4 py-2 border border-gray-300 rounded-lg hover:bg-gray-50">{isGoogleLoading ? <><Loader2 className="h-5 w-5 animate-spin" />Signing up...</> : <><img src="https://www.gstatic.com/firebasejs/ui/2.0.0/images/auth/google.svg" alt="Google" className="w-5 h-5" />Sign up with Google</>}</button></div>
-                <p className="mt-6 text-center text-sm text-gray-600">Already have an account? <a href="/login" className="font-medium text-blue-600 hover:text-blue-500">Sign in</a></p>
+            <div className="mt-6">
+                <GoogleButton onClick={signUpWithGoogle} loading={isGoogleLoading} disabled={busy}>Sign up with Google</GoogleButton>
             </div>
-        </div>
+            <Divider label="or use email" />
+
+            <form onSubmit={handleSubmit} className="space-y-4">
+                <Field label="Full name" htmlFor="name">
+                    <div className="relative">
+                        <User className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+                        <input id="name" type="text" autoComplete="name" placeholder="Ada Lovelace" value={name} onChange={(e) => setName(e.target.value)} className={`${inputClass} h-11 pl-10`} required />
+                    </div>
+                </Field>
+                <Field label="Email" htmlFor="email">
+                    <div className="relative">
+                        <Mail className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+                        <input id="email" type="email" autoComplete="email" placeholder="you@university.edu" value={email} onChange={(e) => setEmail(e.target.value)} className={`${inputClass} h-11 pl-10`} required />
+                    </div>
+                </Field>
+                <Field label="Password" htmlFor="password" hint="At least 6 characters.">
+                    <div className="relative">
+                        <Lock className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+                        <input id="password" type="password" autoComplete="new-password" placeholder="Create a password" value={password} onChange={(e) => setPassword(e.target.value)} className={`${inputClass} h-11 pl-10`} minLength={6} required />
+                    </div>
+                </Field>
+                <Button type="submit" size="lg" className="w-full" loading={isLoading} disabled={busy}>
+                    {isLoading ? "Creating account..." : <>Create account <ArrowRight className="h-4 w-4" /></>}
+                </Button>
+            </form>
+        </AuthLayout>
     );
 }

@@ -39,7 +39,8 @@ submissionRouter.post("/submitSolution", requireRole("student"), async (req, res
             await session.abortTransaction();
             return res.status(404).json({ error: "Assignment not found" });
         }
-        if (!includesId(student.courses, assignment.course)) {
+        const course = await Course.findById(assignment.course).select("students").session(session);
+        if (!includesId(student.courses, assignment.course) && !includesId(course?.students, student._id)) {
             await session.abortTransaction();
             return res.status(403).json({ error: "Student is not enrolled in this course" });
         }
@@ -169,6 +170,10 @@ submissionRouter.put("/gradeSolution/:solutionId", requireRole("faculty", "ta"),
         solution.gradedByRole = normalizedRole;
         solution.checkedDate = new Date();
         solution.status = "graded";
+        if (solution.reevalStatus === "pending") {
+            solution.reevalStatus = "resolved";
+            solution.reevalRequested = false;
+        }
         await solution.save({ session });
 
         if (normalizedRole === "TA") {
@@ -183,6 +188,84 @@ submissionRouter.put("/gradeSolution/:solutionId", requireRole("faculty", "ta"),
         return res.status(500).json({ error: "Failed to grade submission" });
     } finally {
         await session.endSession();
+    }
+});
+
+const MAX_REEVAL_TEXT = 2000;
+
+const loadStaffAccessibleSolution = async (solutionId, req) => {
+    const solution = await Solution.findById(solutionId).populate("assignment", "course marks title");
+    if (!solution) return { status: 404, error: "Submission not found" };
+
+    const course = await Course.findById(solution.assignment?.course).select("faculty tas");
+    if (!course) return { status: 404, error: "Course not found" };
+
+    const hasAccess = req.userRole === "faculty"
+        ? idEquals(course.faculty, req.mongoUser._id)
+        : includesId(course.tas, req.mongoUser._id);
+    if (!hasAccess) return { status: 403, error: "You do not have access to this submission" };
+
+    return { solution };
+};
+
+submissionRouter.post("/requestReevaluation/:solutionId", requireRole("student"), async (req, res) => {
+    try {
+        const reason = typeof req.body?.reason === "string" ? req.body.reason.trim() : "";
+        if (!reason) return res.status(400).json({ error: "Please explain why you want a re-evaluation" });
+        if (reason.length > MAX_REEVAL_TEXT) {
+            return res.status(400).json({ error: `Reason must be ${MAX_REEVAL_TEXT} characters or fewer` });
+        }
+
+        const solution = await Solution.findById(req.params.solutionId);
+        if (!solution) return res.status(404).json({ error: "Submission not found" });
+        if (!idEquals(solution.student, req.mongoUser._id)) {
+            return res.status(403).json({ error: "You can only request re-evaluation of your own submission" });
+        }
+        if (solution.status !== "graded") {
+            return res.status(400).json({ error: "Only graded submissions can be re-evaluated" });
+        }
+        if (solution.reevalStatus === "pending") {
+            return res.status(409).json({ error: "A re-evaluation request is already pending" });
+        }
+
+        solution.reevalRequested = true;
+        solution.reevalStatus = "pending";
+        solution.reevalReason = reason;
+        solution.reevalResponse = "";
+        solution.reevalRequestedAt = new Date();
+        await solution.save();
+
+        return res.status(200).json({ message: "Re-evaluation requested", submission: solution });
+    } catch (err) {
+        console.error("Error requesting re-evaluation:", err);
+        return res.status(500).json({ error: "Failed to request re-evaluation" });
+    }
+});
+
+// Staff decline a re-evaluation here. Accepting one is done by re-grading the
+// submission, which marks the pending request as resolved.
+submissionRouter.put("/rejectReevaluation/:solutionId", requireRole("faculty", "ta"), async (req, res) => {
+    try {
+        const response = typeof req.body?.response === "string" ? req.body.response.trim() : "";
+        if (response.length > MAX_REEVAL_TEXT) {
+            return res.status(400).json({ error: `Response must be ${MAX_REEVAL_TEXT} characters or fewer` });
+        }
+
+        const { solution, status, error } = await loadStaffAccessibleSolution(req.params.solutionId, req);
+        if (error) return res.status(status).json({ error });
+        if (solution.reevalStatus !== "pending") {
+            return res.status(400).json({ error: "There is no pending re-evaluation for this submission" });
+        }
+
+        solution.reevalRequested = false;
+        solution.reevalStatus = "rejected";
+        solution.reevalResponse = response;
+        await solution.save();
+
+        return res.status(200).json({ message: "Re-evaluation request declined", submission: solution });
+    } catch (err) {
+        console.error("Error rejecting re-evaluation:", err);
+        return res.status(500).json({ error: "Failed to update re-evaluation request" });
     }
 });
 
